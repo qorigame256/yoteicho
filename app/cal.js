@@ -108,6 +108,17 @@ const Cal = (() => {
   const holidayName = (s) => holidays(Number(s.slice(0, 4)))[s] || null;
 
   // ---------- 繰り返しの展開（仕様書 2.6） ----------
+  const FREQS = ["daily", "weekly", "biweekly", "monthly", "monthlyNth", "monthlyLast", "yearly"];
+  // その日がその月の第何◯曜日か（1〜5）と、最後の◯曜日か
+  const nthOfMonth = (s) => Math.ceil(Number(s.slice(8)) / 7);
+  const isLastWeekdayOfMonth = (s) => {
+    const [y, m, d] = s.split("-").map(Number);
+    return d + 7 > daysInMonth(y, m);
+  };
+  // 開始日 s で選べる繰り返しの種類。第5◯曜日は無い月が多いので「第◯」は第4までにし、そこは「最終」で選ぶ
+  function freqsFor(s) {
+    return FREQS.filter((f) => (f === "monthlyNth" ? nthOfMonth(s) <= 4 : f === "monthlyLast" ? isLastWeekdayOfMonth(s) : true));
+  }
   // 予定 ev の回のうち、from〜to（両端を含む）に1日でもかかるものを、始まる日の早い順に返す。
   // 回は { ev, start, end }（その回の開始日・終了日）。limit を渡すとその件数で打ち切る
   function occurrences(ev, from, to, limit = Infinity) {
@@ -127,9 +138,23 @@ const Cal = (() => {
     const last = ev.repeat.until ? Math.min(toNum(ev.repeat.until), B) : B; // この日までに始まる回だけ
     const lo = Math.max(s, A - len); // これより前に始まる回は from にかからない
     const [, sm, sd] = ev.start.split("-").map(Number);
-    if (ev.repeat.freq === "weekly") {
-      for (let n = s + Math.ceil((lo - s) / 7) * 7; n <= last && out.length < limit; n += 7) push(n);
-    } else if (ev.repeat.freq === "monthly") {
+    const freq = ev.repeat.freq;
+    const step = { daily: 1, weekly: 7, biweekly: 14 }[freq];
+    if (step) {
+      for (let n = s + Math.ceil((lo - s) / step) * step; n <= last && out.length < limit; n += step) push(n);
+    } else if (freq === "monthlyNth" || freq === "monthlyLast") {
+      // 毎月の第◯◯曜日・最終◯曜日。その曜日が無い月は無いので、毎月出る
+      const wd = weekday(ev.start), nth = nthOfMonth(ev.start);
+      let [y, m] = fromNum(lo).split("-").map(Number);
+      while (toNum(ymd(y, m, 1)) <= last && out.length < limit) {
+        const d = freq === "monthlyNth"
+          ? 1 + ((wd - weekday(ymd(y, m, 1)) + 7) % 7) + (nth - 1) * 7
+          : daysInMonth(y, m) - ((weekday(ymd(y, m, daysInMonth(y, m))) - wd + 7) % 7);
+        const n = toNum(ymd(y, m, d));
+        if (n >= lo && n <= last) push(n);
+        if (++m > 12) { m = 1; y++; }
+      }
+    } else if (freq === "monthly") {
       // その日付が無い月（31日に対する30日までの月など）には出さない
       let [y, m] = fromNum(lo).split("-").map(Number);
       while (toNum(ymd(y, m, 1)) <= last && out.length < limit) {
@@ -139,7 +164,7 @@ const Cal = (() => {
         }
         if (++m > 12) { m = 1; y++; }
       }
-    } else if (ev.repeat.freq === "yearly") {
+    } else if (freq === "yearly") {
       // 2月29日は、うるう年だけ
       for (let y = Number(fromNum(lo).slice(0, 4)); toNum(ymd(y, 1, 1)) <= last && out.length < limit; y++) {
         if (sd <= daysInMonth(y, sm)) {
@@ -241,7 +266,7 @@ const Cal = (() => {
 
   return {
     toNum, fromNum, addDays, daysBetween, weekday, daysInMonth, isDate, isTime, toMin, fromMin, monthRange,
-    holidays, holidayName, occurrences, dayView, itemsByDay, upcoming, search,
+    holidays, holidayName, FREQS, freqsFor, nthOfMonth, occurrences, dayView, itemsByDay, upcoming, search,
   };
 })();
 

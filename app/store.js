@@ -3,7 +3,6 @@
 const Store = (() => {
   const KEY = "yoteicho.v1";
   const COLORS = ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "gray"]; // 仕様書 2.9
-  const FREQS = ["weekly", "monthly", "yearly"];
   const TITLE_MAX = 100;
   const MEMO_MAX = 2000;
 
@@ -69,7 +68,7 @@ const Store = (() => {
     }
     if (e.memo != null && (!str(e.memo) || e.memo.length > MEMO_MAX)) return false;
     if (e.repeat != null) {
-      if (typeof e.repeat !== "object" || !FREQS.includes(e.repeat.freq)) return false;
+      if (typeof e.repeat !== "object" || !Cal.freqsFor(e.start).includes(e.repeat.freq)) return false;
       if (e.repeat.until != null && (!Cal.isDate(e.repeat.until) || e.repeat.until < e.start)) return false;
     }
     if (e.skips != null && (!Array.isArray(e.skips) || !e.skips.every(Cal.isDate))) return false;

@@ -3,7 +3,7 @@
 // 同じ住所（qorigame256.github.io）にはほかのアプリも同居し、取っておく場所を共有している。
 // 消すのも横取りするのも、名前が yoteicho- で始まるもの・/yoteicho/ の下だけに限る（ほかのアプリの圏外用を消さないため）。
 const PREFIX = "yoteicho-";
-const CACHE = PREFIX + "v1";
+const CACHE = PREFIX + "v2";
 const FILES = [
   "./",
   "index.html",

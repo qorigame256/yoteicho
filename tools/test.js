@@ -102,6 +102,22 @@ const weekend = ev({ start: "2026-10-23", end: "2026-10-25", repeat: { freq: "we
 eq("毎週 何日か 次の週", occ(weekend, "2026-10-26", "2026-11-01"), ["2026-10-30〜2026-11-01"]);
 eq("毎週 何日か 途中の日", occ(weekend, "2026-10-25", "2026-10-25"), ["2026-10-23〜2026-10-25"]);
 
+const daily = ev({ start: "2026-10-30", repeat: { freq: "daily", until: "2026-11-02" } });
+eq("毎日 月をまたいで終わりの日まで", occ(daily, "2026-10-01", "2026-11-30"), ["2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02"]);
+eq("毎日 先の日から数える", occ({ ...daily, repeat: { freq: "daily", until: null } }, "2027-03-01", "2027-03-02"), ["2027-03-01", "2027-03-02"]);
+const biweekly = ev({ start: "2026-10-03", repeat: { freq: "biweekly", until: null } });
+eq("2週ごと", occ(biweekly, "2026-10-01", "2026-11-30"), ["2026-10-03", "2026-10-17", "2026-10-31", "2026-11-14", "2026-11-28"]);
+eq("2週ごと 先の月から数える（間の週は出さない）", occ(biweekly, "2027-01-01", "2027-01-31"), ["2027-01-09", "2027-01-23"]);
+// 2026-10-13 は第2火曜、2026-10-31 は最終土曜
+const nth = ev({ start: "2026-10-13", repeat: { freq: "monthlyNth", until: null } });
+eq("毎月 第2火曜", occ(nth, "2026-10-01", "2027-03-31"), ["2026-10-13", "2026-11-10", "2026-12-08", "2027-01-12", "2027-02-09", "2027-03-09"]);
+const lastSat = ev({ start: "2026-10-31", repeat: { freq: "monthlyLast", until: null } });
+eq("毎月 最終土曜（30日・28日の月も）", occ(lastSat, "2026-10-01", "2027-03-31"), ["2026-10-31", "2026-11-28", "2026-12-26", "2027-01-30", "2027-02-27", "2027-03-27"]);
+eq("毎月 第◯曜 始まる前は出さない・件数で打ち切る", occ(nth, "2026-09-01", "2027-12-31", 2), ["2026-10-13", "2026-11-10"]);
+eq("選べる繰り返し 第1〜4は第◯と最終", [Cal.freqsFor("2026-10-13"), Cal.freqsFor("2026-10-24"), Cal.freqsFor("2026-10-25")].map((l) => l.filter((f) => f.startsWith("monthly"))),
+  [["monthly", "monthlyNth"], ["monthly", "monthlyNth"], ["monthly", "monthlyNth", "monthlyLast"]]);
+eq("選べる繰り返し 第5は最終だけ", Cal.freqsFor("2026-10-29").filter((f) => f.startsWith("monthly")), ["monthly", "monthlyLast"]);
+
 // ---------- 1日の中の並びと見え方 ----------
 const A = ev({ title: "終日A", start: "2026-10-24", createdAt: "2026-10-01T00:00:00.000Z" });
 const D = ev({ title: "夜通しD", start: "2026-10-23", end: "2026-10-25", allDay: false, startTime: "22:00", endTime: "02:00", createdAt: "2026-10-02T00:00:00.000Z" });
@@ -175,10 +191,12 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
   eq("予定の形の確かめ", [
     bad({ title: "  " }), bad({ title: "あ".repeat(101) }), bad({ end: "2026-10-23" }), bad({ allDay: "true" }),
     bad({ allDay: false, startTime: "10:00", endTime: "09:00" }), bad({ allDay: false, startTime: "10:00", endTime: null }),
-    bad({ repeat: { freq: "daily", until: null } }), bad({ repeat: { freq: "weekly", until: "2026-10-23" } }),
+    bad({ repeat: { freq: "hourly", until: null } }), bad({ repeat: { freq: "weekly", until: "2026-10-23" } }),
+    bad({ start: "2026-10-29", repeat: { freq: "monthlyNth", until: null } }), bad({ start: "2026-10-13", repeat: { freq: "monthlyLast", until: null } }),
     bad({ repeat: { freq: "weekly", until: null }, skips: ["2026-02-30"] }), bad({ id: "a/b" }), bad({ start: "0099-01-01" }),
     bad({ memo: "あ".repeat(2001) }),
-  ], [false, false, false, false, false, false, false, false, false, false, false, false]);
+  ], [false, false, false, false, false, false, false, false, false, false, false, false, false, false]);
+  eq("新しい繰り返しの種類は正しい", ["daily", "biweekly", "monthlyNth"].map((freq) => bad({ start: "2026-10-13", repeat: { freq, until: null } })), [true, true, true]);
   eq("日をまたぐ時刻の予定は正しい", bad({ end: "2026-10-25", allDay: false, startTime: "22:00", endTime: "02:00" }), true);
 
   // 足し合わせ

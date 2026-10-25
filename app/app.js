@@ -6,7 +6,7 @@ const leftEl = document.getElementById("tb-left");
 const addBtn = document.getElementById("add");
 const TITLES = { cal: "カレンダー", list: "一覧", settings: "設定" };
 const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
-const FREQ_NAMES = { weekly: "毎週", monthly: "毎月", yearly: "毎年" };
+const FREQ_NAMES = { daily: "毎日", weekly: "毎週", biweekly: "2週ごと", monthly: "毎月", monthlyNth: "毎月", monthlyLast: "毎月", yearly: "毎年" };
 const COLOR_NAMES = { red: "赤", orange: "橙", yellow: "黄", green: "緑", cyan: "水色", blue: "青", purple: "紫", gray: "灰" };
 // 共有シートを閉じただけのとき
 const isCancel = (e) => e?.name === "AbortError";
@@ -45,6 +45,11 @@ function shiftMonth(key, n) {
   const [y, m] = key.split("-").map(Number);
   const d = new Date(y, m - 1 + n, 1);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+}
+// 「あと3日」。明後日より先の日だけ（今日・明日は別の印を出す）
+function countdown(date) {
+  const n = Cal.daysBetween(today(), date);
+  return n >= 2 ? `あと${n}日` : "";
 }
 const shortDate = (date) => date.slice(5).split("-").map(Number).join("/"); // 10/24
 const fmtTime = (t) => String(Number(t.slice(0, 2))) + t.slice(2); // 09:00 → 9:00
@@ -106,8 +111,12 @@ function eventRow(item, withDate) {
   }
   const tags = [];
   if (withDate) tags.push(dayLabel(item.start));
+  if (withDate && countdown(item.start)) tags.push(countdown(item.start));
   if (item.start !== item.end) tags.push(`${shortDate(item.start)}〜${shortDate(item.end)}`);
   if (ev.repeat) tags.push(FREQ_NAMES[ev.repeat.freq]);
+  // 毎年の予定は、最初の回から何年目か（誕生日を生まれた日で入れれば年齢になる）
+  const years = ev.repeat && ev.repeat.freq === "yearly" ? Number(item.start.slice(0, 4)) - Number(ev.start.slice(0, 4)) : 0;
+  if (years > 0) tags.push(`${years}周年`);
   const memo = ev.memo ? ev.memo.split("\n")[0] : "";
   const sub = tags.length || memo
     ? `<span class="ev-sub">${tags.map((s) => `<span class="tag">${esc(s)}</span>`).join("")}${esc(memo)}</span>`
@@ -186,7 +195,7 @@ function renderCal() {
 
   // 選んでいる日の予定
   const hol = Cal.holidayName(selected);
-  const panel = h(`<section class="day-panel"><h2>${dayLabel(selected)}${selected === now ? `<span class="tag">今日</span>` : ""}${hol ? `<span class="hol">${esc(hol)}</span>` : ""}</h2></section>`);
+  const panel = h(`<section class="day-panel"><h2>${dayLabel(selected)}${selected === now ? `<span class="tag">今日</span>` : selected === Cal.addDays(now, 1) ? `<span class="tag">明日</span>` : countdown(selected) ? `<span class="tag">${countdown(selected)}</span>` : ""}${hol ? `<span class="hol">${esc(hol)}</span>` : ""}</h2></section>`);
   const items = days.get(selected) || [];
   if (!items.length) panel.appendChild(h(`<p class="none">予定はありません</p>`));
   for (const i of items) panel.appendChild(eventRow(i));
@@ -230,7 +239,7 @@ function renderList() {
     const tomorrow = Cal.addDays(now, 1);
     for (const g of groups) {
       const hol = Cal.holidayName(g.day);
-      const tag = g.day === now ? "今日" : g.day === tomorrow ? "明日" : "";
+      const tag = g.day === now ? "今日" : g.day === tomorrow ? "明日" : countdown(g.day);
       const sec = h(`<section class="day"><h3><span>${dayLabel(g.day)}${tag ? `<span class="tag">${tag}</span>` : ""}</span>${hol ? `<span class="hol">${esc(hol)}</span>` : ""}</h3></section>`);
       for (const i of g.items) sec.appendChild(eventRow(i));
       results.appendChild(sec);
@@ -318,6 +327,11 @@ function openEditor(id, occ) {
   const ev = data.events.find((x) => x.id === id);
   if (ev) showEditor(ev, occ, ev);
 }
+// 保存してある中身を写した新しい予定の入力を開く。日付は開いた回に合わせ、繰り返しは「しない」にする
+function openCopy(ev, occ) {
+  const end = Cal.addDays(occ, Cal.daysBetween(ev.start, ev.end));
+  showEditor(null, null, { ...ev, start: occ, end, repeat: null }, true);
+}
 
 // 保存できない理由。無ければ null
 function problem(v) {
@@ -332,8 +346,9 @@ function problem(v) {
   return null;
 }
 
-function showEditor(ev, occ, v) {
-  const wrap = h(`<div><div class="sheet-head"><h2>${ev ? "予定の変更" : "予定を足す"}</h2><button type="button" class="icon-btn" aria-label="閉じる">✕</button></div></div>`);
+// copy なら複製（ev は null で、v に写した中身が入っている）
+function showEditor(ev, occ, v, copy) {
+  const wrap = h(`<div><div class="sheet-head"><h2>${ev ? "予定の変更" : copy ? "予定の複製" : "予定を足す"}</h2><button type="button" class="icon-btn" aria-label="閉じる">✕</button></div></div>`);
   wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
   if (ev && ev.repeat) wrap.appendChild(h(`<p class="hint">${FREQ_NAMES[ev.repeat.freq]}の予定です（${longDate(ev.start)}から）。ここで変えると全部の回が変わります。</p>`));
   const form = h(`<form class="entry" novalidate>
@@ -349,7 +364,7 @@ function showEditor(ev, occ, v) {
     <div class="row-line"><span>色</span><span class="colors">${Store.COLORS.map((c) => `<label class="sw-c" style="--ec:var(--c-${c})"><input type="radio" name="color" value="${c}" aria-label="${COLOR_NAMES[c]}"><i></i></label>`).join("")}</span></div>
     <textarea class="memo-in" name="memo" rows="3" placeholder="メモ（なくてもよい）" maxlength="${Store.MEMO_MAX}"></textarea>
     <p class="form-error" role="alert"></p>
-    <div class="actions">${ev ? `<button type="button" class="btn danger" data-act="del">削除</button>` : ""}<button type="submit" class="btn primary">${ev ? "保存" : "足す"}</button></div>
+    <div class="actions">${ev ? `<button type="button" class="btn danger" data-act="del">削除</button><button type="button" class="btn" data-act="dup">複製</button>` : ""}<button type="submit" class="btn primary">${ev ? "保存" : "足す"}</button></div>
   </form>`);
   const f = form.elements;
   f.title.value = v.title;
@@ -367,9 +382,14 @@ function showEditor(ev, occ, v) {
   const paintFreq = () => {
     const s = Cal.isDate(f.start.value) ? f.start.value : v.start;
     const [, m, d] = s.split("-").map(Number);
-    const cur = f.freq.value || (v.repeat ? v.repeat.freq : "none");
-    f.freq.innerHTML = `<option value="none">しない</option><option value="weekly">毎週（${WEEK[Cal.weekday(s)]}曜）</option>` +
-      `<option value="monthly">毎月（${d}日）</option><option value="yearly">毎年（${m}月${d}日）</option>`;
+    const w = WEEK[Cal.weekday(s)];
+    const names = { daily: "毎日", weekly: `毎週（${w}曜）`, biweekly: `2週ごと（${w}曜）`, monthly: `毎月（${d}日）`,
+      monthlyNth: `毎月（第${Cal.nthOfMonth(s)}${w}曜）`, monthlyLast: `毎月（最終${w}曜）`, yearly: `毎年（${m}月${d}日）` };
+    const ok = Cal.freqsFor(s);
+    let cur = f.freq.value || (v.repeat ? v.repeat.freq : "none");
+    // 開始日を動かして選べなくなった「第◯曜」「最終曜」は、選べるほうへ移す
+    if (cur !== "none" && !ok.includes(cur)) cur = cur === "monthlyNth" ? "monthlyLast" : cur === "monthlyLast" ? "monthlyNth" : "none";
+    f.freq.innerHTML = `<option value="none">しない</option>` + ok.map((k) => `<option value="${k}">${names[k]}</option>`).join("");
     f.freq.value = cur;
   };
   const paint = () => {
@@ -437,6 +457,9 @@ function showEditor(ev, occ, v) {
     render();
     toast(ev ? "変えました" : "予定を足しました");
   });
+
+  const dup = form.querySelector("[data-act=dup]");
+  if (dup) dup.addEventListener("click", () => openCopy(ev, occ));
 
   const del = form.querySelector("[data-act=del]");
   if (del) {
