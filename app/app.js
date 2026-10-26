@@ -46,21 +46,30 @@ function shiftMonth(key, n) {
   const d = new Date(y, m - 1 + n, 1);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
 }
-// 「あと3日」。明後日より先の日だけ（今日・明日は別の印を出す）
-function countdown(date) {
+// 日付に付ける印「今日」「明日」「あと3日」（仕様書 2.4）。昨日より前は無し
+function dayTag(date) {
   const n = Cal.daysBetween(today(), date);
-  return n >= 2 ? `あと${n}日` : "";
+  return n === 0 ? "今日" : n === 1 ? "明日" : n >= 2 ? `あと${n}日` : "";
 }
 const shortDate = (date) => date.slice(5).split("-").map(Number).join("/"); // 10/24
 const fmtTime = (t) => String(Number(t.slice(0, 2))) + t.slice(2); // 09:00 → 9:00
 const colorVar = (c) => `var(--c-${Store.COLORS.includes(c) ? c : "blue"})`;
 
 // 失敗はすぐ後の「◯◯しました」の案内に上書きされないよう、閉じるまで残る alert で知らせる
-const saveFailed = () => alert("保存できませんでした。端末の空きを確認してください。\n（いまの変更は、アプリを閉じると消えます）");
+const saveFailed = (kept) => alert("保存できませんでした。端末の空きを確認してください。\n"
+  + (kept ? "（いまの変更は、アプリを閉じると消えます）" : "（いまの変更は取りやめました）"));
 function save() {
   const ok = Store.save(data);
-  if (!ok) saveFailed();
+  if (!ok) saveFailed(true);
   return ok;
+}
+// 予定を足す・変える・消すときの保存。失敗したら undo で変える前に戻す
+// （そのまま残すと、もう一度押したときに同じ予定が2件できたり、変更が保存されずに閉じたりするため）
+function commit(undo) {
+  if (Store.save(data)) return true;
+  undo();
+  saveFailed(false);
+  return false;
 }
 let toastTimer = null;
 // undo を渡すと「取り消す」を付け、押せるよう長めに出す
@@ -111,7 +120,7 @@ function eventRow(item, withDate) {
   }
   const tags = [];
   if (withDate) tags.push(dayLabel(item.start));
-  if (withDate && countdown(item.start)) tags.push(countdown(item.start));
+  if (withDate && dayTag(item.start)) tags.push(dayTag(item.start));
   if (item.start !== item.end) tags.push(`${shortDate(item.start)}〜${shortDate(item.end)}`);
   if (ev.repeat) tags.push(FREQ_NAMES[ev.repeat.freq]);
   // 毎年の予定は、最初の回から何年目か（誕生日を生まれた日で入れれば年齢になる）
@@ -195,7 +204,8 @@ function renderCal() {
 
   // 選んでいる日の予定
   const hol = Cal.holidayName(selected);
-  const panel = h(`<section class="day-panel"><h2>${dayLabel(selected)}${selected === now ? `<span class="tag">今日</span>` : selected === Cal.addDays(now, 1) ? `<span class="tag">明日</span>` : countdown(selected) ? `<span class="tag">${countdown(selected)}</span>` : ""}${hol ? `<span class="hol">${esc(hol)}</span>` : ""}</h2></section>`);
+  const tag = dayTag(selected);
+  const panel = h(`<section class="day-panel"><h2>${dayLabel(selected)}${tag ? `<span class="tag">${tag}</span>` : ""}${hol ? `<span class="hol">${esc(hol)}</span>` : ""}</h2></section>`);
   const items = days.get(selected) || [];
   if (!items.length) panel.appendChild(h(`<p class="none">予定はありません</p>`));
   for (const i of items) panel.appendChild(eventRow(i));
@@ -236,10 +246,9 @@ function renderList() {
       results.appendChild(h(`<p class="empty">これからの予定はありません<br><span class="hint">右上の「＋」で足せます</span></p>`));
       return;
     }
-    const tomorrow = Cal.addDays(now, 1);
     for (const g of groups) {
       const hol = Cal.holidayName(g.day);
-      const tag = g.day === now ? "今日" : g.day === tomorrow ? "明日" : countdown(g.day);
+      const tag = dayTag(g.day);
       const sec = h(`<section class="day"><h3><span>${dayLabel(g.day)}${tag ? `<span class="tag">${tag}</span>` : ""}</span>${hol ? `<span class="hol">${esc(hol)}</span>` : ""}</h3></section>`);
       for (const i of g.items) sec.appendChild(eventRow(i));
       results.appendChild(sec);
@@ -440,6 +449,7 @@ function showEditor(ev, occ, v, copy) {
     const msg = problem(out);
     form.querySelector(".form-error").textContent = msg || "";
     if (msg) return;
+    const before = { events: data.events.slice(), startedAt: data.settings.startedAt };
     if (ev) {
       const i = data.events.indexOf(ev);
       if (i < 0) return closeSheet(); // 開いているあいだに消された
@@ -450,7 +460,7 @@ function showEditor(ev, occ, v, copy) {
       data.events.push(Store.clean({ id: Store.newId(), ...out, skips: [], createdAt: new Date().toISOString() }));
       if (!data.settings.startedAt) data.settings.startedAt = today();
     }
-    if (!save()) return;
+    if (!commit(() => { data.events = before.events; data.settings.startedAt = before.startedAt; })) return;
     closeSheet();
     // 足した予定・繰り返さない予定は、その日をカレンダーで選ぶ（繰り返しの回から開いたときは動かさない）
     if (!ev || !out.repeat) { selected = out.start; month = out.start.slice(0, 7); }
@@ -491,7 +501,7 @@ function removeEvent(ev) {
   const i = data.events.indexOf(ev);
   if (i < 0) return;
   data.events.splice(i, 1);
-  if (!save()) return;
+  if (!commit(() => data.events.splice(i, 0, ev))) return;
   closeSheet();
   render();
   toast("消しました", () => {
@@ -500,8 +510,9 @@ function removeEvent(ev) {
   });
 }
 function skipOne(ev, occ) {
+  const before = ev.skips;
   ev.skips = [...new Set([...ev.skips, occ])].sort();
-  if (!save()) return;
+  if (!commit(() => { ev.skips = before; })) return;
   closeSheet();
   render();
   toast(`${dayLabel(occ)}の回を消しました`, () => {

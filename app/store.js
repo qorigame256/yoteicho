@@ -32,9 +32,10 @@ const Store = (() => {
     if (!raw) return fresh();
     try {
       const d = JSON.parse(raw);
-      const list = Array.isArray(d.events) ? d.events : [];
-      const events = list.filter(isEvent);
-      if (events.length !== list.length) keepBroken(raw); // 読めない予定があったら、元の中身を残してから進む
+      // 予定の一覧が無い・一覧になっていないのも壊れた中身（空の一覧として読むと、退避せずに上書きしてしまう）
+      if (!d || !Array.isArray(d.events)) throw new Error("events");
+      const events = d.events.filter(isEvent);
+      if (events.length !== d.events.length) keepBroken(raw); // 読めない予定があったら、元の中身を残してから進む
       return { version: 1, events: events.map(clean), settings: cleanSettings(d.settings) };
     } catch (e) {
       keepBroken(raw);

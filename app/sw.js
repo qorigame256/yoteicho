@@ -3,7 +3,7 @@
 // 同じ住所（qorigame256.github.io）にはほかのアプリも同居し、取っておく場所を共有している。
 // 消すのも横取りするのも、名前が yoteicho- で始まるもの・/yoteicho/ の下だけに限る（ほかのアプリの圏外用を消さないため）。
 const PREFIX = "yoteicho-";
-const CACHE = PREFIX + "v2";
+const CACHE = PREFIX + "v3";
 const FILES = [
   "./",
   "index.html",
@@ -31,16 +31,13 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET" || !e.request.url.startsWith(self.registration.scope)) return;
-  e.respondWith(
-    caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(e.request, { ignoreSearch: true });
-      const fresh = fetch(e.request)
-        .then((res) => {
-          if (res.ok) cache.put(e.request, res.clone());
-          return res;
-        })
-        .catch(() => cached);
-      return cached || fresh;
-    })
-  );
+  const cache = caches.open(CACHE);
+  const fresh = cache.then((c) => fetch(e.request).then(async (res) => {
+    if (res.ok) await c.put(e.request, res.clone());
+    return res;
+  }));
+  // 取っておいた版を先に返したあとも、最新版を取り終えて取っておくまで止めないでもらう
+  // （待たせないと、裏の取り込みの途中で止められ、次に開いたときも古い版のままになることがある）
+  e.waitUntil(fresh.catch(() => {}));
+  e.respondWith(cache.then((c) => c.match(e.request, { ignoreSearch: true })).then((cached) => cached || fresh));
 });

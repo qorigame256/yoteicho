@@ -233,9 +233,10 @@ const Cal = (() => {
   // ---------- 検索（仕様書 2.3） ----------
   // 全角・半角と英字の大文字・小文字をそろえる
   const norm = (s) => String(s || "").normalize("NFKC").toLowerCase();
-  // 今日以降にかかる最初の回（何日かにまたがって今日も続いている回を含む）
+  // 今日以降にかかる最初の回（何日かにまたがって今日も続いている回を含む）。
+  // 予定の日付は 2199 年までなので、そこまでを探す（最初の1回で打ち切るので、毎日の予定でも重くならない）
   function nextOccurrence(ev, today) {
-    return occurrences(ev, today, addDays(today, 366 * 9), 1)[0] || null; // 9年あれば2月29日の毎年も届く
+    return occurrences(ev, today, "2199-12-31", 1)[0] || null;
   }
   // 今日より前に終わった最後の回
   function lastOccurrenceBefore(ev, today) {

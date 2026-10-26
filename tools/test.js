@@ -157,6 +157,12 @@ eq("検索 終わった繰り返しは最後の回", found("ジム"), [[], ["ジ
 eq("検索 これからは早い順・過去は新しい順", found("")[0].length + found(" ")[0].length, 0);
 const order = Cal.search(all.concat(ev({ title: "買い物2", start: "2026-09-15" }), ev({ title: "買い物3", start: "2026-12-01" })), "買い物", "2026-10-24");
 eq("検索 並び", [order.upcoming.map((o) => o.start), order.past.map((o) => o.start)], [["2026-12-01"], ["2026-10-01", "2026-09-15"]]);
+// 全期間から探す：遠い先の予定も、消した回が続いて次の回が遠い繰り返しも見つかる
+const far = ev({ title: "十年後", start: "2036-10-26" });
+const skipped = ev({ title: "記念日", start: "2020-11-01", repeat: { freq: "yearly", until: null },
+  skips: Array.from({ length: 12 }, (_, i) => `${2026 + i}-11-01`) });
+const farFound = (e) => Cal.search([e], e.title, "2026-10-24").upcoming.map((o) => o.start);
+eq("検索 遠い先の予定", [farFound(far), farFound(skipped)], [["2036-10-26"], ["2038-11-01"]]);
 
 // ---------- 保存（store.js） ----------
 const KEY = "yoteicho.v1";
@@ -184,6 +190,13 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
   const partly = Store.load();
   eq("一部が壊れていたら読める予定だけ使う", [partly.events.map((e) => e.id), partly.settings.weekStart], [[good.id], 1]);
   eq("一部が壊れていても元の中身は退避する", brokenKeys().length, 1);
+  for (const k of brokenKeys()) mem.delete(k);
+
+  const noList = JSON.stringify({ version: 1, events: { a: good }, settings: { weekStart: 1 } });
+  mem.set(KEY, noList);
+  await Store.init();
+  eq("予定の一覧が壊れていたら空で始める", Store.load(), Store.fresh());
+  eq("予定の一覧が壊れていたら元の中身は退避する", brokenKeys().map((k) => mem.get(k)), [noList]);
   for (const k of brokenKeys()) mem.delete(k);
 
   const bad = (o) => Store.isEvent({ ...ev({ start: "2026-10-24" }), ...o });
