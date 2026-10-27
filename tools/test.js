@@ -164,6 +164,15 @@ const skipped = ev({ title: "記念日", start: "2020-11-01", repeat: { freq: "y
 const farFound = (e) => Cal.search([e], e.title, "2026-10-24").upcoming.map((o) => o.start);
 eq("検索 遠い先の予定", [farFound(far), farFound(skipped)], [["2036-10-26"], ["2038-11-01"]]);
 
+// ---------- 毎日のやること（仕様書 2.11） ----------
+eq("区切りの時刻より前は前の日", [Cal.habitDay("2026-10-27", 3, 4), Cal.habitDay("2026-10-27", 4, 4), Cal.habitDay("2026-11-01", 0, 1), Cal.habitDay("2026-10-27", 0, 0)],
+  ["2026-10-26", "2026-10-27", "2026-10-31", "2026-10-27"]);
+// 月・木だけのやること。10月22日（木）に足した
+const hb = { id: "h1", title: "ゴミ出し", days: [1, 4], since: "2026-10-22", done: ["2026-10-22"] };
+eq("やることの印", ["2026-10-21", "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-29", "2026-10-30"].map((d) => Cal.habitMark(hb, d, "2026-10-29")),
+  ["before", "done", "off", "miss", "open", "future"]);
+eq("やることの印 今日できた", Cal.habitMark({ ...hb, done: ["2026-10-29"] }, "2026-10-29", "2026-10-29"), "done");
+
 // ---------- 保存（store.js） ----------
 const KEY = "yoteicho.v1";
 const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".broken."));
@@ -219,13 +228,50 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
   mine.settings.startedAt = "2026-10-01";
   const added = Store.clean(ev({ title: "足す予定", start: "2026-10-25" }));
   const r = Store.merge(mine, { app: "yoteicho", events: [{ ...keep, title: "ファイルの予定" }, added, { id: "z", title: "壊れた" }], settings: { weekStart: 1 } }, "2026-10-24");
-  eq("足し合わせ 件数", r, { added: 1, skipped: 1, broken: 1 });
+  eq("足し合わせ 件数", r, { added: 1, skipped: 1, broken: 1, habits: 0 });
   eq("足し合わせ 同じ id は今のまま・週の始まりは変えない", [mine.events.map((e) => e.title), mine.settings.weekStart, mine.settings.startedAt],
     [["今の予定", "足す予定"], 0, "2026-10-01"]);
   const empty = Store.fresh();
   Store.merge(empty, { events: [added], settings: { weekStart: 1 } }, "2026-10-24");
   eq("足し合わせ 空の端末は週の始まりも・使い始めた日は今日", [empty.events.length, empty.settings.weekStart, empty.settings.startedAt], [1, 1, "2026-10-24"]);
   eq("繰り返さない予定の skips は空にする", Store.clean({ ...ev({ start: "2026-10-24" }), skips: ["2026-10-24"] }).skips, []);
+
+  // 毎日のやること
+  const hbad = (o) => Store.isHabit({ ...hb, ...o });
+  eq("正しいやること", hbad({}), true);
+  eq("やることの形の確かめ", [
+    hbad({ title: " " }), hbad({ title: "あ".repeat(101) }), hbad({ days: [] }), hbad({ days: [7] }), hbad({ days: [1.5] }),
+    hbad({ since: "2026-02-30" }), hbad({ done: ["2026-10-32"] }), hbad({ done: null }), hbad({ id: "a b" }),
+  ], [false, false, false, false, false, false, false, false, false]);
+  eq("やることを整える", Store.cleanHabit({ ...hb, days: [4, 1, 4], done: ["2026-10-29", "2026-10-22", "2026-10-29"], extra: 1 }),
+    { id: "h1", title: "ゴミ出し", days: [1, 4], since: "2026-10-22", done: ["2026-10-22", "2026-10-29"], createdAt: null });
+
+  const old = JSON.stringify({ version: 1, events: [good], settings: { weekStart: 1 } });
+  mem.set(KEY, old);
+  await Store.init();
+  const oldLoaded = Store.load();
+  eq("前の版の中身はやること無し・時刻は4時", [oldLoaded.habits, oldLoaded.settings.dayStart, brokenKeys().length], [[], 4, 0]);
+  mem.set(KEY, JSON.stringify({ version: 1, events: [good], habits: [hb, { id: "y" }], settings: { dayStart: 0 } }));
+  await Store.init();
+  const hPartly = Store.load();
+  eq("壊れたやることは飛ばして退避する", [hPartly.habits.map((x) => x.id), hPartly.settings.dayStart, brokenKeys().length], [["h1"], 0, 1]);
+  for (const k of brokenKeys()) mem.delete(k);
+  const startOf = async (v) => {
+    mem.set(KEY, JSON.stringify({ version: 1, events: [], settings: { dayStart: v } }));
+    await Store.init();
+    return Store.load().settings.dayStart;
+  };
+  const starts = [];
+  for (const v of [24, -1, "5", 2.5, 23]) starts.push(await startOf(v));
+  eq("時刻の設定がおかしければ4時", starts, [4, 4, 4, 4, 23]);
+
+  const hm = Store.fresh();
+  hm.habits.push(Store.cleanHabit({ ...hb, title: "今のやること" }));
+  const hr = Store.merge(hm, { events: [], habits: [{ ...hb, title: "ファイルのやること" }, { ...hb, id: "h2" }, { id: "z" }], settings: { dayStart: 0 } }, "2026-10-29");
+  eq("足し合わせ やること", [hr, hm.habits.map((x) => x.title), hm.settings.dayStart], [{ added: 0, skipped: 0, broken: 1, habits: 1 }, ["今のやること", "ゴミ出し"], 4]);
+  const he = Store.fresh();
+  Store.merge(he, { events: [], habits: [hb], settings: { dayStart: 0 } }, "2026-10-29");
+  eq("足し合わせ 空の端末はチェックが外れる時刻も・使い始めた日は今日", [he.habits.length, he.settings.dayStart, he.settings.startedAt], [1, 0, "2026-10-29"]);
 
   console.log(`${pass} 件 OK` + (fail ? ` / ${fail} 件 失敗` : ""));
   process.exit(fail ? 1 : 0);

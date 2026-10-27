@@ -1,10 +1,10 @@
-// 画面の切り替えと3つのタブ（カレンダー・一覧・設定）、予定の入力の画面。
+// 画面の切り替えと4つのタブ（カレンダー・一覧・毎日・設定）、予定と毎日のやることの入力の画面。
 let data; // いちばん下で Store.init() を待ってから入れる
 const view = document.getElementById("view");
 const titleEl = document.getElementById("title");
 const leftEl = document.getElementById("tb-left");
 const addBtn = document.getElementById("add");
-const TITLES = { cal: "カレンダー", list: "一覧", settings: "設定" };
+const TITLES = { cal: "カレンダー", list: "一覧", daily: "毎日のやること", settings: "設定" };
 const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
 const FREQ_NAMES = { daily: "毎日", weekly: "毎週", biweekly: "2週ごと", monthly: "毎月", monthlyNth: "毎月", monthlyLast: "毎月", yearly: "毎年" };
 const COLOR_NAMES = { red: "赤", orange: "橙", yellow: "黄", green: "緑", cyan: "水色", blue: "青", purple: "紫", gray: "灰" };
@@ -17,6 +17,7 @@ let month = today().slice(0, 7); // カレンダーで見ている月
 let selected = today(); // カレンダーで選んでいる日
 let query = ""; // 一覧の検索欄
 let shownToday = today(); // 開いたまま日をまたいだかを見る
+let shownHabitDay = null; // 毎日のタブで出しているやることの日（チェックが外れる時刻をまたいだかを見る）
 
 // ---------- 小道具 ----------
 function today() {
@@ -97,7 +98,9 @@ document.querySelectorAll(".tabs button").forEach((b) => {
   });
 });
 addBtn.addEventListener("click", () => {
-  if (data) openNew(tab === "cal" ? selected : today());
+  if (!data) return;
+  if (tab === "daily") showHabitEditor(null);
+  else openNew(tab === "cal" ? selected : today());
 });
 
 function render() {
@@ -106,7 +109,7 @@ function render() {
   leftEl.innerHTML = "";
   titleEl.textContent = TITLES[tab];
   view.innerHTML = "";
-  ({ cal: renderCal, list: renderList, settings: renderSettings })[tab]();
+  ({ cal: renderCal, list: renderList, daily: renderDaily, settings: renderSettings })[tab]();
 }
 
 // ---------- 予定の1行（カレンダーの下・一覧で共通） ----------
@@ -257,6 +260,193 @@ function renderList() {
   paint();
 }
 
+// ---------- 毎日のやること（仕様書 2.11） ----------
+// いま数えている「やることの日」。チェックが外れる時刻より前なら前の日
+function habitToday() {
+  return Cal.habitDay(today(), new Date().getHours(), data.settings.dayStart);
+}
+const MARK_TEXT = { done: "できた", miss: "やらなかった", off: "お休みの曜日", before: "足す前", open: "まだ", future: "" };
+const MARK_SIGN = { done: "●", miss: "×", off: "–", before: "", open: "", future: "" };
+// やる曜日の書き方（毎日なら「毎日」、ほかは「月・木」。並びは週の始まりに従う）
+function daysText(days) {
+  if (days.length === 7) return "毎日";
+  const ws = data.settings.weekStart;
+  return [...days].sort((a, b) => ((a - ws + 7) % 7) - ((b - ws + 7) % 7)).map((w) => WEEK[w]).join("・");
+}
+
+function renderDaily() {
+  const now = habitToday();
+  shownHabitDay = now;
+  if (!data.habits.length) {
+    view.appendChild(h(`<p class="empty">毎日のやることはありません<br><span class="hint">右上の「＋」で足せます</span></p>`));
+    return;
+  }
+  const w = Cal.weekday(now);
+  const todays = data.habits.filter((x) => x.days.includes(w));
+  const rest = data.habits.filter((x) => !x.days.includes(w));
+  const left = todays.filter((x) => !x.done.includes(now)).length;
+  view.appendChild(h(`<div class="hb-head"><h2>${dayLabel(now)}</h2><span class="${todays.length && !left ? "hb-all" : ""}">${!todays.length ? "今日はお休み" : left ? `あと ${left} 件` : "全部できました"}</span></div>`));
+
+  if (todays.length) {
+    const sec = h(`<section class="day hb-list"></section>`);
+    for (const x of todays) sec.appendChild(habitRow(x, now, true));
+    view.appendChild(sec);
+  }
+  if (rest.length) {
+    const off = h(`<section class="day hb-list"><h3>今日はお休み</h3></section>`);
+    for (const x of rest) off.appendChild(habitRow(x, now, false));
+    view.appendChild(off);
+  }
+  view.appendChild(h(`<p class="hint hb-foot">毎日 ${data.settings.dayStart}:00 に全部のチェックが外れます（設定で変えられます）。●×は昨日までの7日です。</p>`));
+}
+
+// やることの1行。checkable なら左にチェックの箱
+function habitRow(x, now, checkable) {
+  const done = x.done.includes(now);
+  const row = h(`<div class="hb-row${done ? " done" : ""}"></div>`);
+  if (checkable) {
+    const box = h(`<button type="button" class="hb-box" role="checkbox" aria-checked="${done}" aria-label="${esc(x.title)}">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>`);
+    box.addEventListener("click", () => toggleHabit(x, now));
+    row.appendChild(box);
+  } else {
+    row.appendChild(h(`<span class="hb-box off" aria-hidden="true"></span>`));
+  }
+  // 昨日までの7日（古い順）
+  const week = [];
+  for (let i = 7; i >= 1; i--) {
+    const d = Cal.addDays(now, -i);
+    week.push({ d, m: Cal.habitMark(x, d, now) });
+  }
+  const done7 = week.filter((o) => o.m === "done").length, miss7 = week.filter((o) => o.m === "miss").length;
+  const marks = week.map((o) => `<span class="mk ${o.m}"><span>${WEEK[Cal.weekday(o.d)]}</span><b>${MARK_SIGN[o.m]}</b></span>`).join("");
+  const main = h(`<button type="button" class="hb-main" aria-label="${esc(`${x.title}の記録。昨日までの7日で、できた日 ${done7}、やらなかった日 ${miss7}`)}">
+    <span class="hb-title">${esc(x.title)}${x.days.length < 7 ? `<span class="tag">${daysText(x.days)}</span>` : ""}</span>
+    <span class="hb-week" aria-hidden="true">${marks}</span>
+  </button>`);
+  main.addEventListener("click", () => showHabitLog(x));
+  row.appendChild(main);
+  return row;
+}
+
+// 今日のチェックを付ける・外す（昨日より前は変えられない）
+function toggleHabit(x, now) {
+  const before = x.done;
+  x.done = x.done.includes(now) ? x.done.filter((d) => d !== now) : [...x.done, now].sort();
+  if (!commit(() => { x.done = before; })) return;
+  render();
+}
+
+// ひと月の記録（やることを押すと出る）
+function showHabitLog(x, key) {
+  const now = habitToday();
+  key = key || now.slice(0, 7);
+  const wrap = h(`<div><div class="sheet-head"><h2>${esc(x.title)}</h2><button type="button" class="icon-btn" aria-label="閉じる">✕</button></div>
+    <p class="hint">${daysText(x.days)}・${longDate(x.since)}から</p></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  const nav = h(`<div class="hb-mnav"><button type="button" class="icon-btn" aria-label="前の月">‹</button><span>${monthTitle(key)}</span><button type="button" class="icon-btn" aria-label="次の月">›</button></div>`);
+  const [prev, next] = nav.querySelectorAll("button");
+  prev.addEventListener("click", () => showHabitLog(x, shiftMonth(key, -1)));
+  next.addEventListener("click", () => showHabitLog(x, shiftMonth(key, 1)));
+  wrap.appendChild(nav);
+
+  const ws = data.settings.weekStart;
+  const { from, to } = Cal.monthRange(key, ws);
+  const grid = h(`<div class="hb-cal"></div>`);
+  for (let i = 0; i < 7; i++) {
+    const w = (ws + i) % 7;
+    grid.appendChild(h(`<span class="hb-wd ${w === 0 ? "sun" : w === 6 ? "sat" : ""}">${WEEK[w]}</span>`));
+  }
+  const count = { done: 0, miss: 0 };
+  for (let d = from; d <= to; d = Cal.addDays(d, 1)) {
+    if (d.slice(0, 7) !== key) { grid.appendChild(h(`<span class="hb-d blank"></span>`)); continue; }
+    const m = Cal.habitMark(x, d, now);
+    if (m in count) count[m]++;
+    const label = `${dayLabel(d)} ${MARK_TEXT[m]}`;
+    grid.appendChild(h(`<span class="hb-d ${m}${d === now ? " today" : ""}" role="img" aria-label="${esc(label)}"><span>${Number(d.slice(8))}</span><b>${MARK_SIGN[m]}</b></span>`));
+  }
+  wrap.appendChild(grid);
+  const total = count.done + count.miss;
+  wrap.appendChild(h(`<p class="hb-sum">この月　できた <b>${count.done}</b> 日・やらなかった <b>${count.miss}</b> 日${total ? `（${Math.round((count.done / total) * 100)}%）` : ""}</p>`));
+  wrap.appendChild(h(`<p class="hint">今日の分は、チェックが付くまで数えません。</p>`));
+  const act = h(`<div class="actions hb-act"><button type="button" class="btn">変える</button></div>`);
+  act.querySelector("button").addEventListener("click", () => showHabitEditor(x));
+  wrap.appendChild(act);
+  openSheet(wrap);
+}
+
+// やることを足す・変える
+function showHabitEditor(x) {
+  const ws = data.settings.weekStart;
+  const wrap = h(`<div><div class="sheet-head"><h2>${x ? "やることの変更" : "毎日のやることを足す"}</h2><button type="button" class="icon-btn" aria-label="閉じる">✕</button></div></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  const order = Array.from({ length: 7 }, (_, i) => (ws + i) % 7);
+  const form = h(`<form class="entry" novalidate>
+    <input class="title-in" name="title" placeholder="やること（例：薬を飲む）" maxlength="${Store.TITLE_MAX}" autocomplete="off" enterkeyhint="done">
+    <div class="row-line hb-days-in"><span>やる曜日</span><span class="wd-btns">${order.map((w) => `<button type="button" data-w="${w}" class="${w === 0 ? "sun" : w === 6 ? "sat" : ""}">${WEEK[w]}</button>`).join("")}</span></div>
+    ${x ? `<p class="hint">曜日を変えると、これまでの記録も新しい曜日で数え直します（外した曜日は「お休み」になります）。</p>` : ""}
+    <p class="form-error" role="alert"></p>
+    <div class="actions">${x ? `<button type="button" class="btn danger" data-act="del">削除</button>` : ""}<button type="submit" class="btn primary">${x ? "保存" : "足す"}</button></div>
+  </form>`);
+  const f = form.elements;
+  f.title.value = x ? x.title : "";
+  const on = new Set(x ? x.days : [0, 1, 2, 3, 4, 5, 6]);
+  const btns = form.querySelectorAll(".wd-btns button");
+  const paint = () => btns.forEach((b) => {
+    const w = Number(b.dataset.w);
+    b.classList.toggle("on", on.has(w));
+    b.setAttribute("aria-pressed", String(on.has(w)));
+  });
+  btns.forEach((b) => b.addEventListener("click", () => {
+    const w = Number(b.dataset.w);
+    if (on.has(w)) on.delete(w); else on.add(w);
+    paint();
+  }));
+  paint();
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const title = f.title.value.trim();
+    const msg = !title ? "やることを入れてください" : !on.size ? "やる曜日を1つ以上選んでください" : null;
+    form.querySelector(".form-error").textContent = msg || "";
+    if (msg) return;
+    const days = [...on];
+    const before = { habits: data.habits.slice(), startedAt: data.settings.startedAt };
+    if (x) {
+      const i = data.habits.indexOf(x);
+      if (i < 0) return closeSheet(); // 開いているあいだに消された
+      data.habits[i] = Store.cleanHabit({ ...x, title, days });
+    } else {
+      data.habits.push(Store.cleanHabit({ id: Store.newId(), title, days, since: habitToday(), done: [], createdAt: new Date().toISOString() }));
+      if (!data.settings.startedAt) data.settings.startedAt = today();
+    }
+    if (!commit(() => { data.habits = before.habits; data.settings.startedAt = before.startedAt; })) return;
+    closeSheet();
+    render();
+    toast(x ? "変えました" : "やることを足しました");
+  });
+
+  const del = form.querySelector("[data-act=del]");
+  if (del) del.addEventListener("click", () => {
+    if (!confirm(`「${x.title}」を消しますか？これまでの記録も消えます。`)) return;
+    const i = data.habits.indexOf(x);
+    if (i < 0) return closeSheet();
+    data.habits.splice(i, 1);
+    if (!commit(() => data.habits.splice(i, 0, x))) return;
+    closeSheet();
+    render();
+    toast("消しました", () => {
+      data.habits.splice(Math.min(i, data.habits.length), 0, x);
+      save(); render();
+    });
+  });
+
+  wrap.appendChild(form);
+  openSheet(wrap);
+  if (!x) f.title.focus();
+}
+
 // ---------- 設定 ----------
 function renderSettings() {
   const ws = h(`<section class="card"><h2>週の始まり</h2>
@@ -269,12 +459,26 @@ function renderSettings() {
   });
   view.appendChild(ws);
 
+  // 毎日のやることのチェックが外れる時刻（仕様書 2.11）
+  const ds = h(`<section class="card"><h2>毎日のやること</h2>
+    <label class="row-line"><span>チェックが外れる時刻</span><select aria-label="チェックが外れる時刻">${Array.from({ length: 24 }, (_, i) => `<option value="${i}">${i}:00</option>`).join("")}</select></label>
+    <p class="hint">この時刻に全部のチェックが外れ、チェックの無かったものは「やらなかった」になります。この時刻より前に付けたチェックは、前の日の分になります。</p>
+  </section>`);
+  const dsSel = ds.querySelector("select");
+  dsSel.value = String(data.settings.dayStart);
+  dsSel.addEventListener("change", () => {
+    const before = data.settings.dayStart;
+    data.settings.dayStart = Number(dsSel.value);
+    if (!commit(() => { data.settings.dayStart = before; })) dsSel.value = String(before);
+  });
+  view.appendChild(ds);
+
   // バックアップ（仕様書 2.8）
   const last = data.settings.lastExport;
   const overdue = backupOverdue();
   const bk = h(`<section class="card"><h2>バックアップ</h2>
-    <p class="hint">予定はこの端末の中だけにあります。機種変更や万一に備えて、ときどき書き出してください（iPhone では「"ファイル"に保存」を選びます）。</p>
-    <p>予定 ${data.events.length} 件<br>最後に書き出した日：${last ? esc(longDate(last)) : "まだありません"}</p>
+    <p class="hint">予定と毎日のやることはこの端末の中だけにあります。機種変更や万一に備えて、ときどき書き出してください（iPhone では「"ファイル"に保存」を選びます）。</p>
+    <p>予定 ${data.events.length} 件・毎日のやること ${data.habits.length} 件<br>最後に書き出した日：${last ? esc(longDate(last)) : "まだありません"}</p>
     ${overdue != null ? `<p class="notice">${last ? `最後に書き出してから ${overdue} 日たっています。` : "まだ一度も書き出していません。"}</p>` : ""}
     <div class="actions"><button type="button" class="btn" data-act="import">読み込む</button><button type="button" class="btn primary" data-act="export">書き出す</button></div>
     <input type="file" accept="application/json,.json" hidden>
@@ -300,7 +504,7 @@ function renderSettings() {
   view.appendChild(ps);
 
   view.appendChild(h(`<section class="card"><h2>このアプリについて</h2>
-    <p class="hint">予定はこの端末の中だけに保存され、ネットには送られません。予定の時刻の通知はありません。</p>
+    <p class="hint">予定と毎日のやることはこの端末の中だけに保存され、ネットには送られません。予定の時刻の通知はありません。</p>
     <p class="hint">祝日は 2007〜2099 年に対応しています（春分の日・秋分の日は計算による予測です）。</p>
   </section>`));
 }
@@ -526,7 +730,7 @@ const BACKUP_DAYS = 30; // 最後に書き出してから（まだなら使い�
 const BACKUP_ASK_AGAIN = 7; // 「あとで」を選んだら、次に知らせるまでの日数
 // 書き出していない日数。知らせる時期でなければ null
 function backupOverdue() {
-  if (!data.events.length) return null;
+  if (!data.events.length && !data.habits.length) return null;
   const base = data.settings.lastExport || data.settings.startedAt;
   if (!base) return null;
   const n = Cal.daysBetween(base, today());
@@ -585,7 +789,7 @@ async function importData(f) {
   const r = Store.merge(data, incoming, today());
   save();
   render();
-  toast(`${r.added} 件を足しました` + (r.skipped ? `（同じ予定 ${r.skipped} 件は飛ばしました）` : "") + (r.broken ? `　壊れた予定 ${r.broken} 件は読めませんでした` : ""));
+  toast(`予定 ${r.added} 件` + (r.habits ? `・毎日のやること ${r.habits} 件` : "") + "を足しました" + (r.skipped ? `（同じ予定 ${r.skipped} 件は飛ばしました）` : "") + (r.broken ? `　壊れた予定 ${r.broken} 件は読めませんでした` : ""));
 }
 
 // ---------- 起動 ----------
@@ -602,9 +806,13 @@ Store.init().then(() => {
       if (selected === shownToday) { selected = now; month = now.slice(0, 7); }
       shownToday = now;
       render();
-    }
+    } else if (tab === "daily" && habitToday() !== shownHabitDay) render();
     setTimeout(maybeAskBackup, 600);
   });
+  // 開いたまま、チェックが外れる時刻をまたいだとき
+  setInterval(() => {
+    if (document.visibilityState === "visible" && sheet.hidden && tab === "daily" && habitToday() !== shownHabitDay) render();
+  }, 30000);
 });
 
 // 消されにくい保存をお願いする（iPhone ではホーム画面から開いたときに効く）

@@ -1,5 +1,5 @@
-// 日付の計算・日本の祝日・繰り返しの予定の展開・検索。画面には触らない
-// （tools/test.js が Node からそのまま呼んで検査するため。仕様書 2.3・2.4・2.6・2.7）。
+// 日付の計算・日本の祝日・繰り返しの予定の展開・検索・毎日のやることの印。画面には触らない
+// （tools/test.js が Node からそのまま呼んで検査するため。仕様書 2.3・2.4・2.6・2.7・2.11）。
 // 日付は "YYYY-MM-DD" の文字列で持ち、計算のときだけ「1970-01-01 から数えた日数」に直す。
 const Cal = (() => {
   const MS_DAY = 86400000;
@@ -265,9 +265,23 @@ const Cal = (() => {
     return result;
   }
 
+  // ---------- 毎日のやること（仕様書 2.11） ----------
+  // いまの時（0〜23）が区切りの時刻より前なら、まだ前の日のやることとして数える
+  const habitDay = (date, hour, startHour) => (hour < startHour ? addDays(date, -1) : date);
+  // その日の印。"future"（まだ来ない）・"before"（足す前）・"off"（やらない曜日）・"done"（できた）・
+  // "open"（今日で、まだ）・"miss"（やらなかった）。曜日は今の設定で見る
+  function habitMark(habit, day, today) {
+    if (day > today) return "future";
+    if (day < habit.since) return "before";
+    if (!habit.days.includes(weekday(day))) return "off";
+    if (habit.done.includes(day)) return "done";
+    return day === today ? "open" : "miss";
+  }
+
   return {
     toNum, fromNum, addDays, daysBetween, weekday, daysInMonth, isDate, isTime, toMin, fromMin, monthRange,
     holidays, holidayName, FREQS, freqsFor, nthOfMonth, occurrences, dayView, itemsByDay, upcoming, search,
+    habitDay, habitMark,
   };
 })();
 

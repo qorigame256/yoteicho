@@ -167,6 +167,56 @@ main {
 .day h3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 14px; margin: 6px 0; }
 .day h3 .muted { font-weight: 400; font-size: 13px; color: var(--muted); }
 
+/* 毎日のやること（仕様書 2.11） */
+.hb-head { display: flex; align-items: baseline; justify-content: space-between; margin: 2px 2px 8px; }
+.hb-head h2 { margin: 0; font-size: 15px; }
+.hb-head > span { font-size: 14px; color: var(--text2); }
+.hb-head .hb-all { color: var(--c-green); font-weight: 600; }
+.hb-list { padding: 0 12px; }
+.hb-list h3 { color: var(--muted); font-weight: 600; }
+.hb-row { display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--line); }
+.hb-list > .hb-row:first-child { border-top: 0; }
+.hb-box {
+  flex: none; width: 30px; height: 30px; border-radius: 8px; padding: 0;
+  border: 2px solid var(--muted); background: none; color: transparent;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.hb-box.off { border-style: dashed; border-color: var(--line); }
+.hb-row.done .hb-box { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.hb-main { flex: 1; min-width: 0; border: 0; background: none; padding: 10px 0; text-align: left; display: flex; flex-direction: column; gap: 4px; }
+.hb-title { font-size: 16px; overflow-wrap: anywhere; }
+.hb-row.done .hb-title { color: var(--muted); text-decoration: line-through; }
+.hb-week { display: flex; gap: 3px; }
+.mk { width: 22px; display: flex; flex-direction: column; align-items: center; font-size: 10px; line-height: 13px; color: var(--muted); }
+.mk b { font-size: 12px; line-height: 15px; height: 15px; font-weight: 700; }
+.mk.done b { color: var(--c-green); }
+.mk.miss b { color: var(--danger); }
+.hb-foot { margin: 4px 4px 0; }
+.hb-mnav { display: flex; align-items: center; justify-content: center; font-size: 16px; font-variant-numeric: tabular-nums; }
+.hb-mnav span { min-width: 7.2em; text-align: center; }
+.hb-cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 8px; }
+.hb-wd { text-align: center; font-size: 11px; color: var(--muted); }
+.hb-wd.sun { color: var(--sun); }
+.hb-wd.sat { color: var(--sat); }
+.hb-d { min-height: 42px; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 12px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.hb-d b { font-size: 14px; line-height: 16px; height: 16px; }
+.hb-d.done { background: color-mix(in srgb, var(--c-green) 18%, transparent); }
+.hb-d.done b { color: var(--c-green); }
+.hb-d.miss { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.hb-d.miss b { color: var(--danger); }
+.hb-d.off b, .hb-d.before, .hb-d.future { color: var(--muted); }
+.hb-d.before, .hb-d.future { opacity: .55; }
+.hb-d.today { box-shadow: inset 0 0 0 2px var(--accent); }
+.hb-sum { margin: 10px 2px 0; font-size: 14px; }
+.row-line.hb-days-in { flex-direction: column; align-items: stretch; gap: 0; padding-top: 10px; }
+.wd-btns { display: flex; justify-content: space-between; padding: 8px 0 12px; }
+.wd-btns button { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); font-size: 14px; padding: 0; }
+.wd-btns button.sun { color: var(--sun); }
+.wd-btns button.sat { color: var(--sat); }
+.wd-btns button.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+#sheet .hb-act { margin-top: 14px; }
+#sheet .hb-act .btn { flex: 1; }
+
 /* 下から出る入力の画面 */
 #sheet-back { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 10; }
 #sheet {
