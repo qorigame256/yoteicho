@@ -164,6 +164,20 @@ const skipped = ev({ title: "記念日", start: "2020-11-01", repeat: { freq: "y
 const farFound = (e) => Cal.search([e], e.title, "2026-10-24").upcoming.map((o) => o.start);
 eq("検索 遠い先の予定", [farFound(far), farFound(skipped)], [["2036-10-26"], ["2038-11-01"]]);
 
+// ---------- 「◯月中」の予定（仕様書 2.12） ----------
+const nov = { ...ev({ title: "11月中", start: "2026-11-01" }), inMonth: true };
+const everyMonth = { ...ev({ title: "毎月中", start: "2026-09-01", repeat: { freq: "monthly", until: null }, skips: ["2026-11-01"] }), inMonth: true };
+const march = { ...ev({ title: "毎年3月中", start: "2026-03-01", repeat: { freq: "yearly", until: null } }), inMonth: true };
+eq("月中 各回はその月の1日〜末日", occ(everyMonth, "2026-09-30", "2027-02-01"), ["2026-09-01〜2026-09-30", "2026-10-01〜2026-10-31", "2026-12-01〜2026-12-31", "2027-01-01〜2027-01-31", "2027-02-01〜2027-02-28"]);
+eq("月中 月末だけかかる", [occ(nov, "2026-11-30", "2026-12-31"), occ(nov, "2026-12-01", "2026-12-31")], [["2026-11-01〜2026-11-30"], []]);
+eq("月中 日の枠には出さない", Cal.itemsByDay([nov, one], "2026-11-01", "2026-11-30").get("2026-11-01").length, 0);
+eq("月中 その月の分", ["2026-10", "2026-11", "2027-03"].map((k) => Cal.monthItems([nov, everyMonth, march], k).map((i) => i.ev.title)),
+  [["毎月中"], ["11月中"], ["毎月中", "毎年3月中"]]);
+const upM = Cal.upcoming([nov, everyMonth, one], "2026-10-24").slice(0, 4).map((g) => g.month ? `${g.month} ${g.items.map((i) => i.ev.title)}` : g.day);
+eq("これから 月中は今月がいちばん上・先の月は1日の前", upM, ["2026-10 毎月中", "2026-10-24", "2026-11 11月中", "2026-12 毎月中"]);
+const mFound = Cal.search([nov], "11月", "2026-11-30");
+eq("検索 月中は月末まで「これから」", [mFound.upcoming.map((o) => o.start), Cal.search([nov], "11月", "2026-12-01").past.map((o) => o.start)], [["2026-11-01"], ["2026-11-01"]]);
+
 // ---------- 毎日のやること（仕様書 2.11） ----------
 eq("区切りの時刻より前は前の日", [Cal.habitDay("2026-10-27", 3, 4), Cal.habitDay("2026-10-27", 4, 4), Cal.habitDay("2026-11-01", 0, 1), Cal.habitDay("2026-10-27", 0, 0)],
   ["2026-10-26", "2026-10-27", "2026-10-31", "2026-10-27"]);
@@ -272,6 +286,29 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
   const he = Store.fresh();
   Store.merge(he, { events: [], habits: [hb], settings: { dayStart: 0 } }, "2026-10-29");
   eq("足し合わせ 空の端末はチェックが外れる時刻も・使い始めた日は今日", [he.habits.length, he.settings.dayStart, he.settings.startedAt], [1, 0, "2026-10-29"]);
+
+  // 「◯月中」の予定の形（仕様書 2.12・3）
+  eq("月中 正しい予定", [Store.isEvent(nov), Store.isEvent(everyMonth), Store.isEvent(march), Store.clean(nov).inMonth, Store.clean(one).inMonth], [true, true, true, true, false]);
+  eq("月中 形の確かめ", [
+    bad({ inMonth: "true" }), bad({ inMonth: true }), bad({ inMonth: true, start: "2026-11-01", end: "2026-11-02" }),
+    bad({ inMonth: true, start: "2026-11-01", end: "2026-11-01", allDay: false, startTime: "09:00", endTime: "10:00" }),
+    bad({ inMonth: true, start: "2026-11-01", end: "2026-11-01", repeat: { freq: "weekly", until: null } }),
+  ], [false, false, false, false, false]);
+
+  // 下のタブの並び（仕様書 2.10）
+  const tabsOf = async (v) => {
+    mem.set(KEY, JSON.stringify({ version: 1, events: [], settings: { tabOrder: v } }));
+    await Store.init();
+    return Store.load().settings.tabOrder.join(",");
+  };
+  const tabs = [];
+  for (const v of [["daily", "cal", "list", "settings"], ["cal", "cal", "list", "settings"], ["cal", "list", "daily"], "cal", undefined]) tabs.push(await tabsOf(v));
+  eq("タブの並び おかしければ最初の並び", tabs, ["daily,cal,list,settings", "cal,list,daily,settings", "cal,list,daily,settings", "cal,list,daily,settings", "cal,list,daily,settings"]);
+  const tm = Store.fresh(), te = Store.fresh();
+  tm.events.push(Store.clean(one));
+  Store.merge(tm, { events: [], settings: { tabOrder: ["settings", "cal", "list", "daily"] } }, "2026-10-27");
+  Store.merge(te, { events: [one], settings: { tabOrder: ["settings", "cal", "list", "daily"] } }, "2026-10-27");
+  eq("足し合わせ タブの並びは空の端末だけファイルどおり", [tm.settings.tabOrder[0], te.settings.tabOrder[0]], ["cal", "settings"]);
 
   console.log(`${pass} 件 OK` + (fail ? ` / ${fail} 件 失敗` : ""));
   process.exit(fail ? 1 : 0);

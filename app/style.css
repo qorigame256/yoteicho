@@ -143,6 +143,16 @@ main {
 .day-panel h2 { font-size: 15px; margin: 2px 2px 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 0 8px; }
 .day-panel h2 .tag { margin-left: 0; }
 .hol { color: var(--sun); font-size: 13px; font-weight: 600; }
+/* 月の表のすぐ上の「◯月中」の予定（仕様書 2.12） */
+.month-panel { margin-bottom: 10px; }
+.month-panel + .cal-wrap { margin-top: 0; }
+
+/* 設定の「下のタブの並び」 */
+.to-row { display: flex; align-items: center; gap: 4px; border-top: 1px solid var(--line); min-height: 46px; }
+.to-row:first-child { border-top: 0; }
+.to-row span { flex: 1; font-size: 16px; }
+.to-row .icon-btn { font-size: 18px; color: var(--accent); }
+.to-row .icon-btn:disabled { color: var(--line); }
 .none { color: var(--muted); font-size: 14px; padding: 12px 2px; margin: 0; border-top: 1px solid var(--line); }
 
 /* 予定の行 */
@@ -241,6 +251,12 @@ main {
   padding: 6px 8px; font-size: 16px; min-height: 38px; min-width: 0;
 }
 .entry.all-day input[type=time] { display: none; }
+/* 「◯月中」（仕様書 2.12）：日付と時刻の行の代わりに月を選ぶ */
+.entry.in-month .not-month, .entry:not(.in-month) .month-line { display: none; }
+.month-line input {
+  border: 1px solid var(--line); background: var(--bg); border-radius: 9px;
+  padding: 6px 8px; font-size: 16px; min-height: 38px; min-width: 0;
+}
 .entry input[type=checkbox] { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); flex: none; }
 .entry input[type=checkbox][switch] { width: auto; height: auto; }
 .colors { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; padding: 8px 0; }

@@ -4,6 +4,7 @@ const view = document.getElementById("view");
 const titleEl = document.getElementById("title");
 const leftEl = document.getElementById("tb-left");
 const addBtn = document.getElementById("add");
+const TAB_NAMES = { cal: "カレンダー", list: "一覧", daily: "毎日", settings: "設定" }; // 下のタブの名前
 const TITLES = { cal: "カレンダー", list: "一覧", daily: "毎日のやること", settings: "設定" };
 const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
 const FREQ_NAMES = { daily: "毎日", weekly: "毎週", biweekly: "2週ごと", monthly: "毎月", monthlyNth: "毎月", monthlyLast: "毎月", yearly: "毎年" };
@@ -12,7 +13,7 @@ const COLOR_NAMES = { red: "赤", orange: "橙", yellow: "黄", green: "緑", cy
 const isCancel = (e) => e?.name === "AbortError";
 const pad2 = (n) => String(n).padStart(2, "0"); // すぐ下で today() が使うので、先に置く
 
-let tab = "cal";
+let tab = "cal"; // 起動したら、並びのいちばん左のタブにする（仕様書 D25）
 let month = today().slice(0, 7); // カレンダーで見ている月
 let selected = today(); // カレンダーで選んでいる日
 let query = ""; // 一覧の検索欄
@@ -52,6 +53,10 @@ function dayTag(date) {
   const n = Cal.daysBetween(today(), date);
   return n === 0 ? "今日" : n === 1 ? "明日" : n >= 2 ? `あと${n}日` : "";
 }
+// 「◯月中」の予定の回の呼び名（"2026-11-01" → 「11月中」）
+const monthLabel = (date) => `${Number(date.slice(5, 7))}月中`;
+// 回の呼び名（「この回だけ消す」などに使う）
+const occLabel = (ev, occ) => (ev.inMonth ? monthLabel(occ) : dayLabel(occ));
 const shortDate = (date) => date.slice(5).split("-").map(Number).join("/"); // 10/24
 const fmtTime = (t) => String(Number(t.slice(0, 2))) + t.slice(2); // 09:00 → 9:00
 const colorVar = (c) => `var(--c-${Store.COLORS.includes(c) ? c : "blue"})`;
@@ -103,6 +108,12 @@ addBtn.addEventListener("click", () => {
   else openNew(tab === "cal" ? selected : today());
 });
 
+// 下のタブを設定の並びに置き直す（仕様書 D24）
+function applyTabOrder() {
+  const nav = document.querySelector(".tabs");
+  for (const t of data.settings.tabOrder) nav.appendChild(nav.querySelector(`[data-tab=${t}]`));
+}
+
 function render() {
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   addBtn.hidden = tab === "settings";
@@ -116,15 +127,15 @@ function render() {
 // item は { ev, start, end, view }（その日の見え方 view は Cal.dayView）。withDate なら日付も添える（検索の結果）
 function eventRow(item, withDate) {
   const { ev, view: v } = item;
-  let t1 = "終日", t2 = "";
-  if (!v.allDay) {
+  let t1 = ev.inMonth ? "月中" : "終日", t2 = "";
+  if (!v.allDay && !ev.inMonth) {
     t1 = v.from ? fmtTime(v.from) : "〜";
     t2 = v.to ? fmtTime(v.to) : "〜";
   }
   const tags = [];
-  if (withDate) tags.push(dayLabel(item.start));
-  if (withDate && dayTag(item.start)) tags.push(dayTag(item.start));
-  if (item.start !== item.end) tags.push(`${shortDate(item.start)}〜${shortDate(item.end)}`);
+  if (withDate) tags.push(occLabel(ev, item.start));
+  if (withDate && !ev.inMonth && dayTag(item.start)) tags.push(dayTag(item.start));
+  if (item.start !== item.end && !ev.inMonth) tags.push(`${shortDate(item.start)}〜${shortDate(item.end)}`);
   if (ev.repeat) tags.push(FREQ_NAMES[ev.repeat.freq]);
   // 毎年の予定は、最初の回から何年目か（誕生日を生まれた日で入れれば年齢になる）
   const years = ev.repeat && ev.repeat.freq === "yearly" ? Number(item.start.slice(0, 4)) - Number(ev.start.slice(0, 4)) : 0;
@@ -164,6 +175,13 @@ function renderCal() {
   const { from, to } = Cal.monthRange(month, ws);
   const days = Cal.itemsByDay(data.events, from, to);
   const now = today();
+  // 「◯月中」の予定は月の表のすぐ上（仕様書 2.12）
+  const inMonth = Cal.monthItems(data.events, month);
+  if (inMonth.length) {
+    const mp = h(`<section class="day-panel month-panel"><h2>${monthLabel(month + "-01")}</h2></section>`);
+    for (const i of inMonth) mp.appendChild(eventRow(i));
+    view.appendChild(mp);
+  }
   const wrap = h(`<div class="cal-wrap"></div>`);
   const head = h(`<div class="cal-head" aria-hidden="true"></div>`);
   for (let i = 0; i < 7; i++) {
@@ -250,6 +268,13 @@ function renderList() {
       return;
     }
     for (const g of groups) {
+      if (g.month) {
+        const cur = g.month === now.slice(0, 7);
+        const sec = h(`<section class="day"><h3><span>${monthLabel(g.month + "-01")}${cur ? `<span class="tag">今月</span>` : ""}</span></h3></section>`);
+        for (const i of g.items) sec.appendChild(eventRow(i));
+        results.appendChild(sec);
+        continue;
+      }
       const hol = Cal.holidayName(g.day);
       const tag = dayTag(g.day);
       const sec = h(`<section class="day"><h3><span>${dayLabel(g.day)}${tag ? `<span class="tag">${tag}</span>` : ""}</span>${hol ? `<span class="hol">${esc(hol)}</span>` : ""}</h3></section>`);
@@ -459,6 +484,27 @@ function renderSettings() {
   });
   view.appendChild(ws);
 
+  // 下のタブの並び（仕様書 2.10・D24）
+  const order = data.settings.tabOrder;
+  const to = h(`<section class="card"><h2>下のタブの並び</h2><div class="tab-order"></div>
+    <p class="hint">いちばん上のものが下のタブの左端になり、アプリを開いたときに最初に出ます。</p></section>`);
+  const listEl = to.querySelector(".tab-order");
+  order.forEach((t, i) => {
+    const row = h(`<div class="to-row"><span>${TAB_NAMES[t]}</span>
+      <button type="button" class="icon-btn" data-d="-1" aria-label="${TAB_NAMES[t]}を上へ"${i === 0 ? " disabled" : ""}>↑</button>
+      <button type="button" class="icon-btn" data-d="1" aria-label="${TAB_NAMES[t]}を下へ"${i === order.length - 1 ? " disabled" : ""}>↓</button></div>`);
+    row.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+      const before = order.slice();
+      const j = i + Number(b.dataset.d);
+      [order[i], order[j]] = [order[j], order[i]];
+      if (!commit(() => { data.settings.tabOrder = before; })) return;
+      applyTabOrder();
+      render();
+    }));
+    listEl.appendChild(row);
+  });
+  view.appendChild(to);
+
   // 毎日のやることのチェックが外れる時刻（仕様書 2.11）
   const ds = h(`<section class="card"><h2>毎日のやること</h2>
     <label class="row-line"><span>チェックが外れる時刻</span><select aria-label="チェックが外れる時刻">${Array.from({ length: 24 }, (_, i) => `<option value="${i}">${i}:00</option>`).join("")}</select></label>
@@ -549,6 +595,7 @@ function openCopy(ev, occ) {
 // 保存できない理由。無ければ null
 function problem(v) {
   if (!v.title) return "タイトルを入れてください";
+  if (v.inMonth && !Cal.isDate(v.start)) return "月を入れてください";
   if (!Cal.isDate(v.start) || !Cal.isDate(v.end)) return "開始と終了の日付を入れてください";
   if (!v.allDay && (!Cal.isTime(v.startTime) || !Cal.isTime(v.endTime))) return "開始と終了の時刻を入れてください";
   if (v.allDay ? v.end < v.start : Cal.toMin(v.end, v.endTime) < Cal.toMin(v.start, v.startTime)) return "終了が開始より前になっています";
@@ -563,12 +610,14 @@ function problem(v) {
 function showEditor(ev, occ, v, copy) {
   const wrap = h(`<div><div class="sheet-head"><h2>${ev ? "予定の変更" : copy ? "予定の複製" : "予定を足す"}</h2><button type="button" class="icon-btn" aria-label="閉じる">✕</button></div></div>`);
   wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
-  if (ev && ev.repeat) wrap.appendChild(h(`<p class="hint">${FREQ_NAMES[ev.repeat.freq]}の予定です（${longDate(ev.start)}から）。ここで変えると全部の回が変わります。</p>`));
+  if (ev && ev.repeat) wrap.appendChild(h(`<p class="hint">${FREQ_NAMES[ev.repeat.freq]}の予定です（${ev.inMonth ? monthTitle(ev.start.slice(0, 7)) : longDate(ev.start)}から）。ここで変えると全部の回が変わります。</p>`));
   const form = h(`<form class="entry" novalidate>
     <input class="title-in" name="title" placeholder="タイトル" maxlength="${Store.TITLE_MAX}" autocomplete="off" enterkeyhint="done">
-    <label class="row-line"><span>終日</span><input type="checkbox" switch name="allDay"></label>
-    <div class="row-line"><span>開始</span><span class="dt"><input type="date" name="start" aria-label="開始の日付"><input type="time" name="startTime" aria-label="開始の時刻"></span></div>
-    <div class="row-line"><span>終了</span><span class="dt"><input type="date" name="end" aria-label="終了の日付"><input type="time" name="endTime" aria-label="終了の時刻"></span></div>
+    <label class="row-line"><span>日を決めない（◯月中）</span><input type="checkbox" switch name="inMonth"></label>
+    <div class="row-line month-line"><span>月</span><input type="month" name="month" aria-label="何月中か"></div>
+    <label class="row-line not-month"><span>終日</span><input type="checkbox" switch name="allDay"></label>
+    <div class="row-line not-month"><span>開始</span><span class="dt"><input type="date" name="start" aria-label="開始の日付"><input type="time" name="startTime" aria-label="開始の時刻"></span></div>
+    <div class="row-line not-month"><span>終了</span><span class="dt"><input type="date" name="end" aria-label="終了の日付"><input type="time" name="endTime" aria-label="終了の時刻"></span></div>
     <label class="row-line"><span>繰り返し</span><select name="freq"></select></label>
     <div class="until-box">
       <label class="row-line"><span>終わりの日を決める</span><input type="checkbox" switch name="hasUntil"></label>
@@ -582,6 +631,8 @@ function showEditor(ev, occ, v, copy) {
   const f = form.elements;
   f.title.value = v.title;
   f.allDay.checked = v.allDay;
+  f.inMonth.checked = !!v.inMonth;
+  f.month.value = v.start.slice(0, 7);
   f.start.value = v.start;
   f.end.value = v.end;
   f.startTime.value = v.startTime || "09:00"; // 終日の予定でも、時刻付きに切り替えたときの既定を入れておく
@@ -592,21 +643,26 @@ function showEditor(ev, occ, v, copy) {
   form.querySelector(`input[name=color][value=${Store.COLORS.includes(v.color) ? v.color : "blue"}]`).checked = true;
 
   // 繰り返しの選択肢に、開始日から作った中身を添える（例「毎週（土曜）」）
+  // 「◯月中」なら月の1日を開始日とみなす
+  const monthStart = () => (Cal.isDate(f.month.value + "-01") ? f.month.value + "-01" : v.start.slice(0, 8) + "01");
   const paintFreq = () => {
-    const s = Cal.isDate(f.start.value) ? f.start.value : v.start;
+    const s = f.inMonth.checked ? monthStart() : Cal.isDate(f.start.value) ? f.start.value : v.start;
     const [, m, d] = s.split("-").map(Number);
     const w = WEEK[Cal.weekday(s)];
     const names = { daily: "毎日", weekly: `毎週（${w}曜）`, biweekly: `2週ごと（${w}曜）`, monthly: `毎月（${d}日）`,
       monthlyNth: `毎月（第${Cal.nthOfMonth(s)}${w}曜）`, monthlyLast: `毎月（最終${w}曜）`, yearly: `毎年（${m}月${d}日）` };
-    const ok = Cal.freqsFor(s);
+    if (f.inMonth.checked) Object.assign(names, { monthly: "毎月", yearly: `毎年（${m}月）` }); // 仕様書 D27
+    const ok = f.inMonth.checked ? Store.MONTH_FREQS : Cal.freqsFor(s);
     let cur = f.freq.value || (v.repeat ? v.repeat.freq : "none");
     // 開始日を動かして選べなくなった「第◯曜」「最終曜」は、選べるほうへ移す
-    if (cur !== "none" && !ok.includes(cur)) cur = cur === "monthlyNth" ? "monthlyLast" : cur === "monthlyLast" ? "monthlyNth" : "none";
+    // 「◯月中」に切り替えて選べなくなった種類（毎週など）は「しない」に戻す
+    if (cur !== "none" && !ok.includes(cur)) cur = f.inMonth.checked ? "none" : cur === "monthlyNth" ? "monthlyLast" : cur === "monthlyLast" ? "monthlyNth" : "none";
     f.freq.innerHTML = `<option value="none">しない</option>` + ok.map((k) => `<option value="${k}">${names[k]}</option>`).join("");
     f.freq.value = cur;
   };
   const paint = () => {
     form.classList.toggle("all-day", f.allDay.checked);
+    form.classList.toggle("in-month", f.inMonth.checked);
     form.querySelector(".until-box").hidden = f.freq.value === "none";
     form.querySelector(".until-date").hidden = !f.hasUntil.checked;
   };
@@ -634,16 +690,30 @@ function showEditor(ev, occ, v, copy) {
   f.startTime.addEventListener("change", onStart);
   f.allDay.addEventListener("change", () => { prevStart = startKey(); paint(); });
   f.freq.addEventListener("change", paint);
+  f.inMonth.addEventListener("change", () => {
+    if (f.inMonth.checked) {
+      if (Cal.isDate(f.start.value)) f.month.value = f.start.value.slice(0, 7);
+    } else if (Cal.isDate(f.month.value + "-01") && f.start.value.slice(0, 7) !== f.month.value) {
+      // 月を動かしていたら、日付もその月の1日へ移す（終了も同じだけずらす）
+      f.start.value = f.month.value + "-01";
+      onStart();
+    }
+    paintFreq();
+    paint();
+  });
+  f.month.addEventListener("change", () => { paintFreq(); paint(); });
   f.hasUntil.addEventListener("change", paint);
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    const allDay = f.allDay.checked;
+    const inMonth = f.inMonth.checked;
+    const allDay = inMonth || f.allDay.checked;
     const out = {
       title: f.title.value.trim(),
-      start: f.start.value,
-      end: f.end.value,
+      start: inMonth ? f.month.value + "-01" : f.start.value,
+      end: inMonth ? f.month.value + "-01" : f.end.value,
       allDay,
+      inMonth,
       startTime: allDay ? null : f.startTime.value,
       endTime: allDay ? null : f.endTime.value,
       color: f.color.value || "blue",
@@ -667,7 +737,11 @@ function showEditor(ev, occ, v, copy) {
     if (!commit(() => { data.events = before.events; data.settings.startedAt = before.startedAt; })) return;
     closeSheet();
     // 足した予定・繰り返さない予定は、その日をカレンダーで選ぶ（繰り返しの回から開いたときは動かさない）
-    if (!ev || !out.repeat) { selected = out.start; month = out.start.slice(0, 7); }
+    if (!ev || !out.repeat) {
+      month = out.start.slice(0, 7);
+      // 「◯月中」は日が無いので、月を変えたときと同じ日を選ぶ
+      selected = !out.inMonth ? out.start : month === today().slice(0, 7) ? today() : out.start;
+    }
     render();
     toast(ev ? "変えました" : "予定を足しました");
   });
@@ -685,7 +759,7 @@ function showEditor(ev, occ, v, copy) {
       // 繰り返しの予定は、この回だけか全部かを選ぶ
       const actions = form.querySelector(".actions");
       const box = h(`<div class="del-choice"><p>繰り返しの予定です。どれを消しますか？</p>
-        <button type="button" class="btn danger" data-c="one">この回だけ消す（${dayLabel(occ)}）</button>
+        <button type="button" class="btn danger" data-c="one">この回だけ消す（${occLabel(ev, occ)}）</button>
         <button type="button" class="btn danger" data-c="all">全部消す</button>
         <button type="button" class="btn" data-c="cancel">やめる</button>
       </div>`);
@@ -719,7 +793,7 @@ function skipOne(ev, occ) {
   if (!commit(() => { ev.skips = before; })) return;
   closeSheet();
   render();
-  toast(`${dayLabel(occ)}の回を消しました`, () => {
+  toast(`${occLabel(ev, occ)}の回を消しました`, () => {
     ev.skips = ev.skips.filter((d) => d !== occ);
     save(); render();
   });
@@ -795,6 +869,8 @@ async function importData(f) {
 // ---------- 起動 ----------
 Store.init().then(() => {
   data = Store.load();
+  applyTabOrder();
+  tab = data.settings.tabOrder[0];
   render();
   setTimeout(maybeAskBackup, 600);
   // ホーム画面のアプリは閉じずに裏へ回るだけのことが多いので、戻ってきたときにも確かめる

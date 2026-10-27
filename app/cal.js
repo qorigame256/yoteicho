@@ -1,5 +1,5 @@
 // 日付の計算・日本の祝日・繰り返しの予定の展開・検索・毎日のやることの印。画面には触らない
-// （tools/test.js が Node からそのまま呼んで検査するため。仕様書 2.3・2.4・2.6・2.7・2.11）。
+// （tools/test.js が Node からそのまま呼んで検査するため。仕様書 2.3・2.4・2.6・2.7・2.11・2.12）。
 // 日付は "YYYY-MM-DD" の文字列で持ち、計算のときだけ「1970-01-01 から数えた日数」に直す。
 const Cal = (() => {
   const MS_DAY = 86400000;
@@ -121,15 +121,17 @@ const Cal = (() => {
   }
   // 予定 ev の回のうち、from〜to（両端を含む）に1日でもかかるものを、始まる日の早い順に返す。
   // 回は { ev, start, end }（その回の開始日・終了日）。limit を渡すとその件数で打ち切る
+  // 「◯月中」の予定（inMonth）は start が月の1日で、各回はその月の1日〜末日にかかるものとして扱う（仕様書 2.12）
   function occurrences(ev, from, to, limit = Infinity) {
-    const s = toNum(ev.start), len = toNum(ev.end) - s;
+    const s = toNum(ev.start), len = ev.inMonth ? 30 : toNum(ev.end) - s; // 「◯月中」の len は、範囲より前の回を探す幅にだけ使う
     const A = toNum(from), B = toNum(to);
     const out = [];
     const skips = ev.repeat && ev.skips && ev.skips.length ? new Set(ev.skips) : null;
     const push = (n) => {
-      if (n + len < A || n > B || out.length >= limit) return;
       const d = fromNum(n);
-      if (!skips || !skips.has(d)) out.push({ ev, start: d, end: fromNum(n + len) });
+      const e = ev.inMonth ? n + daysInMonth(Number(d.slice(0, 4)), Number(d.slice(5, 7))) - 1 : n + len;
+      if (e < A || n > B || out.length >= limit) return;
+      if (!skips || !skips.has(d)) out.push({ ev, start: d, end: fromNum(e) });
     };
     if (!ev.repeat) {
       push(s);
@@ -180,7 +182,7 @@ const Cal = (() => {
   // 回 occ が day にどう見えるか。from・to は時刻（無い側は null）。終日と、時刻付きの予定の間の日は allDay
   function dayView(occ, day) {
     const ev = occ.ev;
-    if (ev.allDay) return { allDay: true, from: null, to: null };
+    if (ev.allDay || ev.inMonth) return { allDay: true, from: null, to: null };
     const first = occ.start === day, last = occ.end === day;
     if (first && last) return { allDay: false, from: ev.startTime, to: ev.endTime };
     if (first) return { allDay: false, from: ev.startTime, to: null };
@@ -199,10 +201,12 @@ const Cal = (() => {
 
   // from〜to の日ごとの予定を Map（日付 → 並べた一覧）で返す。何日かにまたがる回は、かかる日すべてに入る。
   // 一覧の1件は { ev, start, end, view }
+  // 「◯月中」の予定は日の枠には出さない（monthItems で別に出す）
   function itemsByDay(events, from, to) {
     const map = new Map();
     for (let n = toNum(from), B = toNum(to); n <= B; n++) map.set(fromNum(n), []);
     for (const ev of events) {
+      if (ev.inMonth) continue;
       for (const o of occurrences(ev, from, to)) {
         const a = Math.max(toNum(o.start), toNum(from)), b = Math.min(toNum(o.end), toNum(to));
         for (let n = a; n <= b; n++) {
@@ -215,19 +219,31 @@ const Cal = (() => {
     return map;
   }
 
+  // 「◯月中」の予定のうち、key（"YYYY-MM"）の月の回を作った順に返す（仕様書 2.12）
+  function monthItems(events, key) {
+    const out = [];
+    for (const ev of events) {
+      if (!ev.inMonth) continue;
+      for (const o of occurrences(ev, key + "-01", key + "-01")) out.push({ ...o, view: dayView(o, o.start) });
+    }
+    return out.sort(byTime);
+  }
+
   // 「これからの予定」：today から days 日分にかかる回を、始まる日（今日より前に始まったものは今日）に1回だけ置き、
-  // [{ day, items }] を日付の早い順に返す（仕様書 2.3）
+  // [{ day, items }] を日付の早い順に返す（仕様書 2.3）。
+  // 「◯月中」の予定は { month: "YYYY-MM", items } にまとめ、その月の日の前に置く（今月の分はいちばん上。仕様書 2.12）
   function upcoming(events, today, days = 365) {
     const to = addDays(today, days - 1);
     const map = new Map();
     for (const ev of events) {
       for (const o of occurrences(ev, today, to)) {
-        const day = o.start < today ? today : o.start;
-        if (!map.has(day)) map.set(day, []);
-        map.get(day).push({ ...o, view: dayView(o, day) });
+        const key = ev.inMonth ? o.start.slice(0, 7) : o.start < today ? today : o.start;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push({ ...o, view: dayView(o, ev.inMonth ? o.start : key) });
       }
     }
-    return [...map.keys()].sort().map((day) => ({ day, items: map.get(day).sort(byTime) }));
+    // "2026-11" は "2026-11-01" より前に並ぶ
+    return [...map.keys()].sort().map((k) => (k.length === 7 ? { month: k, items: map.get(k).sort(byTime) } : { day: k, items: map.get(k).sort(byTime) }));
   }
 
   // ---------- 検索（仕様書 2.3） ----------
@@ -280,7 +296,7 @@ const Cal = (() => {
 
   return {
     toNum, fromNum, addDays, daysBetween, weekday, daysInMonth, isDate, isTime, toMin, fromMin, monthRange,
-    holidays, holidayName, FREQS, freqsFor, nthOfMonth, occurrences, dayView, itemsByDay, upcoming, search,
+    holidays, holidayName, FREQS, freqsFor, nthOfMonth, occurrences, dayView, itemsByDay, monthItems, upcoming, search,
     habitDay, habitMark,
   };
 })();

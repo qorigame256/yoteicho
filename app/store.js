@@ -6,13 +6,15 @@ const Store = (() => {
   const TITLE_MAX = 100;
   const MEMO_MAX = 2000;
   const DAY_START = 4; // 毎日のやることのチェックが外れる時刻（仕様書 2.11）
+  const TABS = ["cal", "list", "daily", "settings"]; // 下のタブの最初の並び（仕様書 2.10）
+  const MONTH_FREQS = ["monthly", "yearly"]; // 「◯月中」の予定で選べる繰り返し（仕様書 D27）
 
   function fresh() {
     return {
       version: 1,
       events: [],
       habits: [],
-      settings: { weekStart: 0, dayStart: DAY_START, lastExport: null, startedAt: null, backupAskedAt: null },
+      settings: { weekStart: 0, dayStart: DAY_START, tabOrder: TABS.slice(), lastExport: null, startedAt: null, backupAskedAt: null },
     };
   }
 
@@ -68,6 +70,12 @@ const Store = (() => {
     if (!str(e.title) || !e.title.trim() || e.title.length > TITLE_MAX) return false;
     if (!Cal.isDate(e.start) || !Cal.isDate(e.end) || e.end < e.start) return false;
     if (typeof e.allDay !== "boolean") return false;
+    // 「◯月中」：月の1日に始まって同じ日に終わる終日の予定で、繰り返しは毎月・毎年だけ（仕様書 2.12）
+    if (e.inMonth != null && typeof e.inMonth !== "boolean") return false;
+    if (e.inMonth) {
+      if (e.start.slice(8) !== "01" || e.end !== e.start || !e.allDay) return false;
+      if (e.repeat != null && !MONTH_FREQS.includes(e.repeat.freq)) return false;
+    }
     if (!e.allDay) {
       if (!Cal.isTime(e.startTime) || !Cal.isTime(e.endTime)) return false;
       if (Cal.toMin(e.end, e.endTime) < Cal.toMin(e.start, e.startTime)) return false;
@@ -89,6 +97,7 @@ const Store = (() => {
       start: e.start,
       end: e.end,
       allDay: e.allDay,
+      inMonth: e.inMonth === true,
       startTime: e.allDay ? null : e.startTime,
       endTime: e.allDay ? null : e.endTime,
       color: COLORS.includes(e.color) ? e.color : "blue",
@@ -119,12 +128,15 @@ const Store = (() => {
     };
   }
 
+  // 4つのタブを1つずつ含む並びか
+  const isTabOrder = (v) => Array.isArray(v) && v.length === TABS.length && TABS.every((t) => v.includes(t));
   function cleanSettings(s) {
     s = s && typeof s === "object" ? s : {};
     const date = (v) => (Cal.isDate(v) ? v : null);
     return {
       weekStart: s.weekStart === 1 ? 1 : 0,
       dayStart: Number.isInteger(s.dayStart) && s.dayStart >= 0 && s.dayStart <= 23 ? s.dayStart : DAY_START,
+      tabOrder: isTabOrder(s.tabOrder) ? s.tabOrder.slice() : TABS.slice(),
       lastExport: date(s.lastExport),
       startedAt: date(s.startedAt),
       backupAskedAt: date(s.backupAskedAt),
@@ -133,7 +145,7 @@ const Store = (() => {
 
   // 読み込んだバックアップを今のデータに足し合わせる（仕様書 2.8）。足した・飛ばした・壊れていた件数を返す。
   // 今に無い id の予定・やることだけ足し、同じ id は今のまま（habits は足したやることの件数。broken は両方の合計）。
-  // 予定もやることも無い端末なら、週の始まりとチェックが外れる時刻もファイルどおりにする
+  // 予定もやることも無い端末なら、週の始まり・チェックが外れる時刻・タブの並びもファイルどおりにする
   function merge(data, incoming, today) {
     const result = { added: 0, skipped: 0, broken: 0, habits: 0 };
     const wasEmpty = data.events.length === 0 && data.habits.length === 0;
@@ -156,12 +168,13 @@ const Store = (() => {
     const s = incoming.settings && typeof incoming.settings === "object" ? incoming.settings : {};
     if (wasEmpty && (s.weekStart === 0 || s.weekStart === 1)) data.settings.weekStart = s.weekStart;
     if (wasEmpty && Number.isInteger(s.dayStart) && s.dayStart >= 0 && s.dayStart <= 23) data.settings.dayStart = s.dayStart;
+    if (wasEmpty && isTabOrder(s.tabOrder)) data.settings.tabOrder = s.tabOrder.slice();
     // この端末で使い始めた日（書き出しの催促はここから数える）
     if ((result.added || result.habits) && !data.settings.startedAt) data.settings.startedAt = today;
     return result;
   }
 
-  return { init, load, save, newId, isEvent, clean, isHabit, cleanHabit, merge, fresh, COLORS, TITLE_MAX, MEMO_MAX };
+  return { init, load, save, newId, isEvent, clean, isHabit, cleanHabit, merge, fresh, COLORS, TITLE_MAX, MEMO_MAX, TABS, MONTH_FREQS };
 })();
 
 if (typeof module !== "undefined") module.exports = Store; // Node（tools/test.js）から読むとき
