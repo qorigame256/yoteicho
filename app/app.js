@@ -346,8 +346,11 @@ function habitRow(x, now, checkable) {
   }
   const done7 = week.filter((o) => o.m === "done").length, miss7 = week.filter((o) => o.m === "miss").length;
   const marks = week.map((o) => `<span class="mk ${o.m}"><span>${WEEK[Cal.weekday(o.d)]}</span><b>${MARK_SIGN[o.m]}</b></span>`).join("");
-  const main = h(`<button type="button" class="hb-main" aria-label="${esc(`${x.title}の記録。昨日までの7日で、できた日 ${done7}、やらなかった日 ${miss7}`)}">
+  // 今日チェックを付けた時刻（今日の行だけ。D28）
+  const at = checkable && done && x.doneAt[now] ? Cal.habitTimeText(now, x.doneAt[now]) : "";
+  const main = h(`<button type="button" class="hb-main" aria-label="${esc(`${x.title}の記録。${at ? `今日は ${at} にできた。` : ""}昨日までの7日で、できた日 ${done7}、やらなかった日 ${miss7}`)}">
     <span class="hb-title">${esc(x.title)}${x.days.length < 7 ? `<span class="tag">${daysText(x.days)}</span>` : ""}</span>
+    ${at ? `<span class="hb-at" aria-hidden="true">${at} にできた</span>` : ""}
     <span class="hb-week" aria-hidden="true">${marks}</span>
   </button>`);
   main.addEventListener("click", () => showHabitLog(x));
@@ -356,10 +359,20 @@ function habitRow(x, now, checkable) {
 }
 
 // 今日のチェックを付ける・外す（昨日より前は変えられない）
+// 付けたときはその時刻も残す（外したら消し、付け直したら新しい時刻にする）
 function toggleHabit(x, now) {
-  const before = x.done;
-  x.done = x.done.includes(now) ? x.done.filter((d) => d !== now) : [...x.done, now].sort();
-  if (!commit(() => { x.done = before; })) return;
+  const before = x.done, beforeAt = x.doneAt;
+  const at = { ...x.doneAt };
+  if (x.done.includes(now)) {
+    x.done = x.done.filter((d) => d !== now);
+    delete at[now];
+  } else {
+    x.done = [...x.done, now].sort();
+    const t = new Date();
+    at[now] = `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}T${pad2(t.getHours())}:${pad2(t.getMinutes())}`;
+  }
+  x.doneAt = at;
+  if (!commit(() => { x.done = before; x.doneAt = beforeAt; })) return;
   render();
 }
 
@@ -443,7 +456,7 @@ function showHabitEditor(x) {
       if (i < 0) return closeSheet(); // 開いているあいだに消された
       data.habits[i] = Store.cleanHabit({ ...x, title, days });
     } else {
-      data.habits.push(Store.cleanHabit({ id: Store.newId(), title, days, since: habitToday(), done: [], createdAt: new Date().toISOString() }));
+      data.habits.push(Store.cleanHabit({ id: Store.newId(), title, days, since: habitToday(), done: [], doneAt: {}, createdAt: new Date().toISOString() }));
       if (!data.settings.startedAt) data.settings.startedAt = today();
     }
     if (!commit(() => { data.habits = before.habits; data.settings.startedAt = before.startedAt; })) return;

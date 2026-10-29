@@ -185,6 +185,9 @@ eq("区切りの時刻より前は前の日", [Cal.habitDay("2026-10-27", 3, 4),
 const hb = { id: "h1", title: "ゴミ出し", days: [1, 4], since: "2026-10-22", done: ["2026-10-22"] };
 eq("やることの印", ["2026-10-21", "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-29", "2026-10-30"].map((d) => Cal.habitMark(hb, d, "2026-10-29")),
   ["before", "done", "off", "miss", "open", "future"]);
+eq("チェックした時刻の書き方", [Cal.habitTimeText("2026-10-29", "2026-10-29T07:05"), Cal.habitTimeText("2026-10-29", "2026-10-29T23:59"),
+  Cal.habitTimeText("2026-10-29", "2026-10-30T01:30"), Cal.habitTimeText("2026-10-29", "2026-10-29T24:00"), Cal.habitTimeText("2026-10-29", "x")],
+  ["7:05", "23:59", "翌1:30", "", ""]);
 eq("やることの印 今日できた", Cal.habitMark({ ...hb, done: ["2026-10-29"] }, "2026-10-29", "2026-10-29"), "done");
 
 // ---------- 保存（store.js） ----------
@@ -258,7 +261,10 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
     hbad({ since: "2026-02-30" }), hbad({ done: ["2026-10-32"] }), hbad({ done: null }), hbad({ id: "a b" }),
   ], [false, false, false, false, false, false, false, false, false]);
   eq("やることを整える", Store.cleanHabit({ ...hb, days: [4, 1, 4], done: ["2026-10-29", "2026-10-22", "2026-10-29"], extra: 1 }),
-    { id: "h1", title: "ゴミ出し", days: [1, 4], since: "2026-10-22", done: ["2026-10-22", "2026-10-29"], createdAt: null });
+    { id: "h1", title: "ゴミ出し", days: [1, 4], since: "2026-10-22", done: ["2026-10-22", "2026-10-29"], doneAt: {}, createdAt: null });
+  eq("チェックした時刻は、できた日の正しいものだけ残す", Store.cleanHabit({ ...hb, done: ["2026-10-22", "2026-10-29"],
+    doneAt: { "2026-10-22": "2026-10-22T07:30", "2026-10-29": "07:30", "2026-10-26": "2026-10-26T08:00" } }).doneAt, { "2026-10-22": "2026-10-22T07:30" });
+  eq("チェックした時刻がおかしくても、やることは壊れた扱いにしない", [hbad({ doneAt: null }), hbad({ doneAt: [1] }), Store.cleanHabit({ ...hb, doneAt: [1] }).doneAt], [true, true, {}]);
 
   const old = JSON.stringify({ version: 1, events: [good], settings: { weekStart: 1 } });
   mem.set(KEY, old);

@@ -293,11 +293,17 @@ const Cal = (() => {
     if (habit.done.includes(day)) return "done";
     return day === today ? "open" : "miss";
   }
+  // チェックを付けた時刻の書き方（仕様書 2.11）。at は "YYYY-MM-DDTHH:MM"。区切りより前の深夜に付けたものは「翌1:30」
+  function habitTimeText(day, at) {
+    if (!isDate(at.slice(0, 10)) || at[10] !== "T" || !isTime(at.slice(11))) return "";
+    const t = `${Number(at.slice(11, 13))}:${at.slice(14)}`;
+    return at.slice(0, 10) > day ? "翌" + t : t;
+  }
 
   return {
     toNum, fromNum, addDays, daysBetween, weekday, daysInMonth, isDate, isTime, toMin, fromMin, monthRange,
     holidays, holidayName, FREQS, freqsFor, nthOfMonth, occurrences, dayView, itemsByDay, monthItems, upcoming, search,
-    habitDay, habitMark,
+    habitDay, habitMark, habitTimeText,
   };
 })();
 

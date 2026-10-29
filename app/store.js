@@ -108,7 +108,9 @@ const Store = (() => {
     };
   }
 
-  // 毎日のやること（仕様書 3）。days は 0＝日曜〜6＝土曜、since は足した日、done はできた日の一覧
+  // 毎日のやること（仕様書 3）。days は 0＝日曜〜6＝土曜、since は足した日、done はできた日の一覧、
+  // doneAt はチェックを付けた時刻（できた日 → "YYYY-MM-DDTHH:MM"）。doneAt は無くても・おかしくても壊れた扱いにせず、使えるものだけ残す
+  const isAt = (v) => str(v) && v.length === 16 && Cal.isDate(v.slice(0, 10)) && v[10] === "T" && Cal.isTime(v.slice(11));
   function isHabit(x) {
     if (!x || typeof x !== "object" || !str(x.id) || !/^[A-Za-z0-9_-]{1,40}$/.test(x.id)) return false;
     if (!str(x.title) || !x.title.trim() || x.title.length > TITLE_MAX) return false;
@@ -117,6 +119,12 @@ const Store = (() => {
     if (!Array.isArray(x.done) || !x.done.every(Cal.isDate)) return false;
     return true;
   }
+  function cleanAt(at, done) {
+    const out = {};
+    if (!at || typeof at !== "object") return out;
+    for (const d of [...new Set(done)].sort()) if (isAt(at[d])) out[d] = at[d];
+    return out;
+  }
   function cleanHabit(x) {
     return {
       id: x.id,
@@ -124,6 +132,7 @@ const Store = (() => {
       days: [...new Set(x.days)].sort(),
       since: x.since,
       done: [...new Set(x.done)].sort(),
+      doneAt: cleanAt(x.doneAt, x.done),
       createdAt: str(x.createdAt) ? x.createdAt : null,
     };
   }
