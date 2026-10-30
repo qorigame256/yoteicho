@@ -178,6 +178,36 @@ eq("これから 月中は今月がいちばん上・先の月は1日の前", up
 const mFound = Cal.search([nov], "11月", "2026-11-30");
 eq("検索 月中は月末まで「これから」", [mFound.upcoming.map((o) => o.start), Cal.search([nov], "11月", "2026-12-01").past.map((o) => o.start)], [["2026-11-01"], ["2026-11-01"]]);
 
+// ---------- 「◯週中」の予定（仕様書 2.13） ----------
+// 2026-10-25 は日曜
+const wk = { ...ev({ title: "毎週中", start: "2026-10-25", repeat: { freq: "weekly", until: null } }), inWeek: true };
+const wkOnce = { ...ev({ title: "今週中", start: "2026-10-25" }), inWeek: true };
+eq("週中 各回は7日間", occ(wk, "2026-10-31", "2026-11-01"), ["2026-10-25〜2026-10-31", "2026-11-01〜2026-11-07"]);
+eq("週中 日の枠には出さない", Cal.itemsByDay([wkOnce], "2026-10-25", "2026-10-31").get("2026-10-28").length, 0);
+eq("週中 その週の分", ["2026-10-24", "2026-10-25", "2026-10-31", "2026-11-03"].map((d) => Cal.weekItems([wk, wkOnce, one], d, 0).map((i) => `${i.ev.title} ${i.start}`)),
+  [[], ["毎週中 2026-10-25", "今週中 2026-10-25"], ["毎週中 2026-10-25", "今週中 2026-10-25"], ["毎週中 2026-11-01"]]);
+// 週の最初の日からずれた「◯週中」（ほかの週の始まりの端末から来たものなど）は、始まる日のある週にだけ出す
+const wkOdd = { ...ev({ title: "ずれた週中", start: "2026-10-28" }), inWeek: true };
+eq("週中 ずれた回は始まる週だけ", [Cal.weekItems([wkOdd], "2026-10-28", 0).length, Cal.weekItems([wkOdd], "2026-11-02", 0).length], [1, 0]);
+eq("週の最初の日",[Cal.weekFrom("2026-10-28", 0), Cal.weekFrom("2026-10-28", 1), Cal.weekFrom("2026-10-25", 1)], ["2026-10-25", "2026-10-26", "2026-10-19"]);
+const today28 = ev({ title: "今日", start: "2026-10-28" });
+const nov1 = ev({ title: "11月1日", start: "2026-11-01" });
+const upW = Cal.upcoming([nov1, today28, wk, everyMonth, nov], "2026-10-28").slice(0, 7)
+  .map((g) => (g.month ? `月 ${g.month}` : g.week ? `週 ${g.week}` : g.day) + " " + g.items.map((i) => i.ev.title).join(","));
+eq("これから 月中→週中（今週は今日の前）→その日", upW,
+  ["月 2026-10 毎月中", "週 2026-10-25 毎週中", "2026-10-28 今日", "月 2026-11 11月中", "週 2026-11-01 毎週中", "2026-11-01 11月1日", "週 2026-11-08 毎週中"]);
+
+// ---------- ひとことメモの検索（仕様書 2.14） ----------
+eq("メモの検索 新しい日から・全部の言葉", [Cal.searchNotes({ "2026-10-01": "公園で散歩", "2026-10-20": "ＡＢＣ 散歩", "2026-10-21": "雨" }, "散歩").map((n) => n.day),
+  Cal.searchNotes({ "2026-10-20": "ＡＢＣ 散歩" }, "abc 散歩").length, Cal.searchNotes({ "2026-10-20": "散歩" }, " ").length,
+  Cal.searchNotes({ "2026-10-20": "散歩" }, "散歩 雨").length], [["2026-10-20", "2026-10-01"], 1, 0, 0]);
+
+// ---------- 週の表示の並べ方（仕様書 2.15） ----------
+const lay = (l) => Cal.layoutDay(l).map((x) => `${x.col}/${x.cols}`);
+eq("重ならなければ1列", lay([{ a: 540, b: 600 }, { a: 600, b: 660 }]), ["0/1", "0/1"]);
+eq("重なれば列を分け、空いた列を使う", lay([{ a: 540, b: 660 }, { a: 570, b: 600 }, { a: 610, b: 640 }, { a: 700, b: 720 }]), ["0/2", "1/2", "1/2", "0/1"]);
+eq("3つ重なる", lay([{ a: 600, b: 660 }, { a: 540, b: 700 }, { a: 620, b: 640 }]), ["1/3", "0/3", "2/3"]);
+
 // ---------- 毎日のやること（仕様書 2.11） ----------
 eq("区切りの時刻より前は前の日", [Cal.habitDay("2026-10-27", 3, 4), Cal.habitDay("2026-10-27", 4, 4), Cal.habitDay("2026-11-01", 0, 1), Cal.habitDay("2026-10-27", 0, 0)],
   ["2026-10-26", "2026-10-27", "2026-10-31", "2026-10-27"]);
@@ -189,6 +219,16 @@ eq("チェックした時刻の書き方", [Cal.habitTimeText("2026-10-29", "202
   Cal.habitTimeText("2026-10-29", "2026-10-30T01:30"), Cal.habitTimeText("2026-10-29", "2026-10-29T24:00"), Cal.habitTimeText("2026-10-29", "x")],
   ["7:05", "23:59", "翌1:30", "", ""]);
 eq("やることの印 今日できた", Cal.habitMark({ ...hb, done: ["2026-10-29"] }, "2026-10-29", "2026-10-29"), "done");
+// 週2回。10月21日（水）に足した。日曜始まりの週：10/18〜10/24・10/25〜10/31
+const pw = { id: "h3", title: "筋トレ", days: [0, 1, 2, 3, 4, 5, 6], perWeek: 2, since: "2026-10-21", done: ["2026-10-22", "2026-10-26", "2026-11-02", "2026-11-03"] };
+eq("週◯回の印 ×は付けない", ["2026-10-20", "2026-10-26", "2026-10-27", "2026-10-29"].map((d) => Cal.habitMark(pw, d, "2026-10-29")), ["before", "done", "free", "open"]);
+eq("週◯回の週の結果", ["2026-10-22", "2026-10-28", "2026-11-01", "2026-11-08"].map((d) => { const r = Cal.habitWeek(pw, d, "2026-11-08", 0); return `${r.from} ${r.count} ${r.mark}`; }),
+  ["2026-10-18 1 before", "2026-10-25 1 miss", "2026-11-01 2 done", "2026-11-08 0 open"]);
+eq("週◯回の週 まだ来ない・月曜始まり", [Cal.habitWeek(pw, "2026-11-15", "2026-11-08", 0).mark, Cal.habitWeek(pw, "2026-10-26", "2026-11-08", 1).count], ["future", 1]);
+eq("今日まだ残っているか", [
+  Cal.habitLeft(pw, "2026-10-28", 0), Cal.habitLeft(pw, "2026-11-04", 0), Cal.habitLeft(pw, "2026-11-03", 0),
+  Cal.habitLeft(hb, "2026-10-29", 0), Cal.habitLeft(hb, "2026-10-28", 0), Cal.habitLeft({ ...hb, done: ["2026-10-29"] }, "2026-10-29", 0),
+], [true, false, false, true, false, false]);
 
 // ---------- 保存（store.js） ----------
 const KEY = "yoteicho.v1";
@@ -245,7 +285,7 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
   mine.settings.startedAt = "2026-10-01";
   const added = Store.clean(ev({ title: "足す予定", start: "2026-10-25" }));
   const r = Store.merge(mine, { app: "yoteicho", events: [{ ...keep, title: "ファイルの予定" }, added, { id: "z", title: "壊れた" }], settings: { weekStart: 1 } }, "2026-10-24");
-  eq("足し合わせ 件数", r, { added: 1, skipped: 1, broken: 1, habits: 0 });
+  eq("足し合わせ 件数", r, { added: 1, skipped: 1, broken: 1, habits: 0, notes: 0 });
   eq("足し合わせ 同じ id は今のまま・週の始まりは変えない", [mine.events.map((e) => e.title), mine.settings.weekStart, mine.settings.startedAt],
     [["今の予定", "足す予定"], 0, "2026-10-01"]);
   const empty = Store.fresh();
@@ -261,7 +301,7 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
     hbad({ since: "2026-02-30" }), hbad({ done: ["2026-10-32"] }), hbad({ done: null }), hbad({ id: "a b" }),
   ], [false, false, false, false, false, false, false, false, false]);
   eq("やることを整える", Store.cleanHabit({ ...hb, days: [4, 1, 4], done: ["2026-10-29", "2026-10-22", "2026-10-29"], extra: 1 }),
-    { id: "h1", title: "ゴミ出し", days: [1, 4], since: "2026-10-22", done: ["2026-10-22", "2026-10-29"], doneAt: {}, createdAt: null });
+    { id: "h1", title: "ゴミ出し", days: [1, 4], perWeek: null, since: "2026-10-22", done: ["2026-10-22", "2026-10-29"], doneAt: {}, createdAt: null });
   eq("チェックした時刻は、できた日の正しいものだけ残す", Store.cleanHabit({ ...hb, done: ["2026-10-22", "2026-10-29"],
     doneAt: { "2026-10-22": "2026-10-22T07:30", "2026-10-29": "07:30", "2026-10-26": "2026-10-26T08:00" } }).doneAt, { "2026-10-22": "2026-10-22T07:30" });
   eq("チェックした時刻がおかしくても、やることは壊れた扱いにしない", [hbad({ doneAt: null }), hbad({ doneAt: [1] }), Store.cleanHabit({ ...hb, doneAt: [1] }).doneAt], [true, true, {}]);
@@ -288,7 +328,7 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
   const hm = Store.fresh();
   hm.habits.push(Store.cleanHabit({ ...hb, title: "今のやること" }));
   const hr = Store.merge(hm, { events: [], habits: [{ ...hb, title: "ファイルのやること" }, { ...hb, id: "h2" }, { id: "z" }], settings: { dayStart: 0 } }, "2026-10-29");
-  eq("足し合わせ やること", [hr, hm.habits.map((x) => x.title), hm.settings.dayStart], [{ added: 0, skipped: 0, broken: 1, habits: 1 }, ["今のやること", "ゴミ出し"], 4]);
+  eq("足し合わせ やること", [hr, hm.habits.map((x) => x.title), hm.settings.dayStart], [{ added: 0, skipped: 0, broken: 1, habits: 1, notes: 0 }, ["今のやること", "ゴミ出し"], 4]);
   const he = Store.fresh();
   Store.merge(he, { events: [], habits: [hb], settings: { dayStart: 0 } }, "2026-10-29");
   eq("足し合わせ 空の端末はチェックが外れる時刻も・使い始めた日は今日", [he.habits.length, he.settings.dayStart, he.settings.startedAt], [1, 0, "2026-10-29"]);
@@ -315,6 +355,53 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
   Store.merge(tm, { events: [], settings: { tabOrder: ["settings", "cal", "list", "daily"] } }, "2026-10-27");
   Store.merge(te, { events: [one], settings: { tabOrder: ["settings", "cal", "list", "daily"] } }, "2026-10-27");
   eq("足し合わせ タブの並びは空の端末だけファイルどおり", [tm.settings.tabOrder[0], te.settings.tabOrder[0]], ["cal", "settings"]);
+
+  // 「◯週中」の予定（仕様書 2.13）
+  eq("週中 正しい予定", [Store.isEvent(wk), Store.isEvent(wkOnce), Store.clean(wk).inWeek, Store.clean(one).inWeek], [true, true, true, false]);
+  eq("週中 形の確かめ", [
+    bad({ inWeek: 1 }), bad({ inWeek: true, end: "2026-10-25" }), bad({ inWeek: true, inMonth: true, start: "2026-11-01" }),
+    bad({ inWeek: true, allDay: false, startTime: "09:00", endTime: "10:00" }), bad({ inWeek: true, repeat: { freq: "monthly", until: null } }),
+  ], [false, false, false, false, false]);
+  const wsd = Store.fresh();
+  wsd.events.push(Store.clean(wk), Store.clean(one));
+  wsd.events[0].skips = ["2026-11-08"];
+  wsd.events[0].repeat.until = "2026-11-29";
+  Store.setWeekStart(wsd, 1);
+  eq("週の始まりを月曜にすると週中は1日後ろへ（ほかの予定は動かない）", [wsd.events[0].start, wsd.events[0].skips, wsd.events[0].repeat.until, wsd.events[1].start, wsd.settings.weekStart],
+    ["2026-10-26", ["2026-11-09"], "2026-11-30", one.start, 1]);
+  Store.setWeekStart(wsd, 0);
+  eq("日曜に戻すと元の日", [wsd.events[0].start, wsd.events[0].skips], ["2026-10-25", ["2026-11-08"]]);
+  const wm = Store.fresh();
+  wm.events.push(Store.clean(one));
+  wm.settings.weekStart = 1;
+  Store.merge(wm, { events: [wkOnce], settings: { weekStart: 0 } }, "2026-10-28");
+  const we = Store.fresh();
+  Store.merge(we, { events: [wkOnce], settings: { weekStart: 1 } }, "2026-10-28");
+  eq("読み込み 週の始まりが違えば週中をこの端末の週へ・空の端末はそのまま", [wm.events[1].start, we.events[0].start, we.settings.weekStart], ["2026-10-26", wkOnce.start, 1]);
+
+  // 週◯回のやること（仕様書 D31）
+  eq("週◯回の形の確かめ", [hbad({ perWeek: 3 }), hbad({ perWeek: null }), hbad({ perWeek: 0 }), hbad({ perWeek: 7 }), hbad({ perWeek: "3" })], [true, true, false, false, false]);
+  eq("週◯回は曜日を全部にする", Store.cleanHabit({ ...hb, perWeek: 3 }).days, [0, 1, 2, 3, 4, 5, 6]);
+
+  // ひとことメモ（仕様書 2.14）
+  mem.set(KEY, JSON.stringify({ version: 1, events: [], notes: { "2026-10-28": " 晴れ\n散歩 ", "2026-02-30": "x", "2026-10-29": "  ", "2026-10-30": 5 } }));
+  await Store.init();
+  const nl = Store.load();
+  eq("メモ 正しいものだけ・1行にして読む・壊れた扱いにしない", [nl.notes, brokenKeys().length], [{ "2026-10-28": "晴れ 散歩" }, 0]);
+  eq("メモ 長さ", Store.cleanNote("あ".repeat(250)).length, 200);
+  const nm = Store.fresh();
+  nm.notes["2026-10-28"] = "今のメモ";
+  const nr = Store.merge(nm, { events: [], notes: { "2026-10-28": "ファイルのメモ", "2026-10-27": "足すメモ" } }, "2026-10-28");
+  eq("読み込み メモは無い日だけ足す", [nr.notes, nm.notes, nm.settings.startedAt], [1, { "2026-10-28": "今のメモ", "2026-10-27": "足すメモ" }, "2026-10-28"]);
+  const nOnly = Store.fresh();
+  nOnly.notes["2026-10-28"] = "メモだけ";
+  Store.merge(nOnly, { events: [], settings: { weekStart: 1 } }, "2026-10-28");
+  eq("メモだけある端末は空の端末ではない", nOnly.settings.weekStart, 0);
+
+  // アイコンの数字の設定
+  mem.set(KEY, JSON.stringify({ version: 1, events: [], settings: { badge: "true" } }));
+  await Store.init();
+  eq("アイコンの数字はおかしければ出さない", [Store.load().settings.badge, Store.fresh().settings.badge], [false, false]);
 
   console.log(`${pass} 件 OK` + (fail ? ` / ${fail} 件 失敗` : ""));
   process.exit(fail ? 1 : 0);

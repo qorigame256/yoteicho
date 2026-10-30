@@ -1,5 +1,5 @@
-// 日付の計算・日本の祝日・繰り返しの予定の展開・検索・毎日のやることの印。画面には触らない
-// （tools/test.js が Node からそのまま呼んで検査するため。仕様書 2.3・2.4・2.6・2.7・2.11・2.12）。
+// 日付の計算・日本の祝日・繰り返しの予定の展開・検索・週の表示の並べ方・毎日のやることの印。画面には触らない
+// （tools/test.js が Node からそのまま呼んで検査するため。仕様書 2.3・2.4・2.6・2.7・2.11〜2.15）。
 // 日付は "YYYY-MM-DD" の文字列で持ち、計算のときだけ「1970-01-01 から数えた日数」に直す。
 const Cal = (() => {
   const MS_DAY = 86400000;
@@ -35,12 +35,14 @@ const Cal = (() => {
     return { date: fromNum(d), time: `${pad(Math.floor(r / 60))}:${pad(r % 60)}` };
   }
 
-  // その月の日が入る週の並び（weekStart は 0＝日曜始まり・1＝月曜始まり）の最初の日と最後の日
+  // s を含む週（weekStart は 0＝日曜始まり・1＝月曜始まり）の最初の日
+  const weekFrom = (s, weekStart) => addDays(s, -((weekday(s) - weekStart + 7) % 7));
+  // その月の日が入る週の並びの最初の日と最後の日
   function monthRange(key, weekStart) {
     const [y, m] = key.split("-").map(Number);
     const first = ymd(y, m, 1), last = ymd(y, m, daysInMonth(y, m));
     return {
-      from: addDays(first, -((weekday(first) - weekStart + 7) % 7)),
+      from: weekFrom(first, weekStart),
       to: addDays(last, (weekStart + 6 - weekday(last)) % 7),
     };
   }
@@ -122,8 +124,9 @@ const Cal = (() => {
   // 予定 ev の回のうち、from〜to（両端を含む）に1日でもかかるものを、始まる日の早い順に返す。
   // 回は { ev, start, end }（その回の開始日・終了日）。limit を渡すとその件数で打ち切る
   // 「◯月中」の予定（inMonth）は start が月の1日で、各回はその月の1日〜末日にかかるものとして扱う（仕様書 2.12）
+  // 「◯週中」の予定（inWeek）は start が週の最初の日で、各回はその日から7日間にかかるものとして扱う（仕様書 2.13）
   function occurrences(ev, from, to, limit = Infinity) {
-    const s = toNum(ev.start), len = ev.inMonth ? 30 : toNum(ev.end) - s; // 「◯月中」の len は、範囲より前の回を探す幅にだけ使う
+    const s = toNum(ev.start), len = ev.inMonth ? 30 : ev.inWeek ? 6 : toNum(ev.end) - s; // 「◯月中」の len は、範囲より前の回を探す幅にだけ使う
     const A = toNum(from), B = toNum(to);
     const out = [];
     const skips = ev.repeat && ev.skips && ev.skips.length ? new Set(ev.skips) : null;
@@ -182,7 +185,7 @@ const Cal = (() => {
   // 回 occ が day にどう見えるか。from・to は時刻（無い側は null）。終日と、時刻付きの予定の間の日は allDay
   function dayView(occ, day) {
     const ev = occ.ev;
-    if (ev.allDay || ev.inMonth) return { allDay: true, from: null, to: null };
+    if (ev.allDay || ev.inMonth || ev.inWeek) return { allDay: true, from: null, to: null };
     const first = occ.start === day, last = occ.end === day;
     if (first && last) return { allDay: false, from: ev.startTime, to: ev.endTime };
     if (first) return { allDay: false, from: ev.startTime, to: null };
@@ -201,12 +204,12 @@ const Cal = (() => {
 
   // from〜to の日ごとの予定を Map（日付 → 並べた一覧）で返す。何日かにまたがる回は、かかる日すべてに入る。
   // 一覧の1件は { ev, start, end, view }
-  // 「◯月中」の予定は日の枠には出さない（monthItems で別に出す）
+  // 「◯月中」「◯週中」の予定は日の枠には出さない（monthItems・weekItems で別に出す）
   function itemsByDay(events, from, to) {
     const map = new Map();
     for (let n = toNum(from), B = toNum(to); n <= B; n++) map.set(fromNum(n), []);
     for (const ev of events) {
-      if (ev.inMonth) continue;
+      if (ev.inMonth || ev.inWeek) continue;
       for (const o of occurrences(ev, from, to)) {
         const a = Math.max(toNum(o.start), toNum(from)), b = Math.min(toNum(o.end), toNum(to));
         for (let n = a; n <= b; n++) {
@@ -229,21 +232,37 @@ const Cal = (() => {
     return out.sort(byTime);
   }
 
+  // 「◯週中」の予定のうち、day を含む週に始まる回を作った順に返す（仕様書 2.13）
+  function weekItems(events, day, weekStart) {
+    const from = weekFrom(day, weekStart), to = addDays(from, 6);
+    const out = [];
+    for (const ev of events) {
+      if (!ev.inWeek) continue;
+      for (const o of occurrences(ev, from, to)) if (o.start >= from) out.push({ ...o, view: dayView(o, o.start) });
+    }
+    return out.sort(byTime);
+  }
+
   // 「これからの予定」：today から days 日分にかかる回を、始まる日（今日より前に始まったものは今日）に1回だけ置き、
   // [{ day, items }] を日付の早い順に返す（仕様書 2.3）。
   // 「◯月中」の予定は { month: "YYYY-MM", items } にまとめ、その月の日の前に置く（今月の分はいちばん上。仕様書 2.12）
+  // 「◯週中」の予定は { week: 週の最初の日, items } にまとめ、その週の最初の日の前に置く（今週の分は今日の前。仕様書 2.13）
   function upcoming(events, today, days = 365) {
     const to = addDays(today, days - 1);
     const map = new Map();
     for (const ev of events) {
       for (const o of occurrences(ev, today, to)) {
-        const key = ev.inMonth ? o.start.slice(0, 7) : o.start < today ? today : o.start;
+        // 並べる鍵は「日付|順番」。同じ日付なら 月中（0）→ 週中（1）→ その日（2）
+        const at = o.start < today ? today : o.start;
+        const key = ev.inMonth ? `${o.start}|0` : ev.inWeek ? `${at}|1|${o.start}` : `${at}|2`;
         if (!map.has(key)) map.set(key, []);
-        map.get(key).push({ ...o, view: dayView(o, ev.inMonth ? o.start : key) });
+        map.get(key).push({ ...o, view: dayView(o, ev.inMonth || ev.inWeek ? o.start : at) });
       }
     }
-    // "2026-11" は "2026-11-01" より前に並ぶ
-    return [...map.keys()].sort().map((k) => (k.length === 7 ? { month: k, items: map.get(k).sort(byTime) } : { day: k, items: map.get(k).sort(byTime) }));
+    return [...map.keys()].sort().map((k) => {
+      const [d, rank, wk] = k.split("|"), items = map.get(k).sort(byTime);
+      return rank === "0" ? { month: d.slice(0, 7), items } : rank === "1" ? { week: wk, items } : { day: d, items };
+    });
   }
 
   // ---------- 検索（仕様書 2.3） ----------
@@ -280,15 +299,46 @@ const Cal = (() => {
     result.past.sort((a, b) => (a.start > b.start ? -1 : a.start < b.start ? 1 : 0));
     return result;
   }
+  // ひとことメモ（{ 日付: 文 }）から、q の言葉をすべて含むものを新しい日の順に [{ day, text }] で返す（仕様書 2.14）
+  function searchNotes(notes, q) {
+    const words = norm(q).split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    return Object.keys(notes).filter((d) => words.every((w) => norm(notes[d]).includes(w))).sort().reverse().map((day) => ({ day, text: notes[day] }));
+  }
+
+  // ---------- 週の表示（仕様書 2.15） ----------
+  // 1日の中の時刻付きの予定を横に並べる。重なり合うものの集まりごとに列を分ける。
+  // list は { a, b }（0:00 からの分。a < b）の一覧。同じ並びで、各要素に col（左から何列目。0 から）と cols（その集まりの列の数）を足して返す
+  function layoutDay(list) {
+    const order = list.map((x, i) => i).sort((i, j) => list[i].a - list[j].a || list[j].b - list[i].b);
+    const out = new Array(list.length);
+    let group = [], ends = [], groupEnd = -Infinity;
+    const flush = () => {
+      for (const g of group) out[g.i] = { ...list[g.i], col: g.col, cols: ends.length };
+      group = []; ends = [];
+    };
+    for (const i of order) {
+      const { a, b } = list[i];
+      if (a >= groupEnd) flush();
+      let c = ends.findIndex((e) => e <= a); // 空いた列があればそこへ
+      if (c < 0) { c = ends.length; ends.push(b); } else ends[c] = b;
+      group.push({ i, col: c });
+      groupEnd = group.length === 1 ? b : Math.max(groupEnd, b);
+    }
+    flush();
+    return out;
+  }
 
   // ---------- 毎日のやること（仕様書 2.11） ----------
   // いまの時（0〜23）が区切りの時刻より前なら、まだ前の日のやることとして数える
   const habitDay = (date, hour, startHour) => (hour < startHour ? addDays(date, -1) : date);
   // その日の印。"future"（まだ来ない）・"before"（足す前）・"off"（やらない曜日）・"done"（できた）・
   // "open"（今日で、まだ）・"miss"（やらなかった）。曜日は今の設定で見る
+  // 週◯回のやること（perWeek）は日ごとの×を付けず、できなかった過ぎた日は "free"（何も出さない。仕様書 2.11）
   function habitMark(habit, day, today) {
     if (day > today) return "future";
     if (day < habit.since) return "before";
+    if (habit.perWeek) return habit.done.includes(day) ? "done" : day === today ? "open" : "free";
     if (!habit.days.includes(weekday(day))) return "off";
     if (habit.done.includes(day)) return "done";
     return day === today ? "open" : "miss";
@@ -299,11 +349,25 @@ const Cal = (() => {
     const t = `${Number(at.slice(11, 13))}:${at.slice(14)}`;
     return at.slice(0, 10) > day ? "翌" + t : t;
   }
+  // 週◯回のやることの、day を含む週の数と結果。mark は "done"（回数に届いた）・"open"（今週で、まだ届いていない）・
+  // "miss"（届かずに終わった）・"before"（足す前の週と、途中で足した週。届いていなければ数えない）・"future"（まだ来ない）
+  function habitWeek(habit, day, today, weekStart) {
+    const from = weekFrom(day, weekStart), to = addDays(from, 6);
+    const count = habit.done.filter((d) => d >= from && d <= to).length;
+    const mark = count >= habit.perWeek ? "done" : from > today ? "future" : to >= today ? "open" : habit.since > from ? "before" : "miss";
+    return { from, to, count, mark };
+  }
+  // 今日まだ残っているやることか（「あと◯件」とアイコンの数字に使う）。週◯回は、今週の回数に届いていたら残っていない
+  function habitLeft(habit, today, weekStart) {
+    if (habit.done.includes(today)) return false;
+    if (habit.perWeek) return habitWeek(habit, today, today, weekStart).count < habit.perWeek;
+    return habit.days.includes(weekday(today));
+  }
 
   return {
-    toNum, fromNum, addDays, daysBetween, weekday, daysInMonth, isDate, isTime, toMin, fromMin, monthRange,
-    holidays, holidayName, FREQS, freqsFor, nthOfMonth, occurrences, dayView, itemsByDay, monthItems, upcoming, search,
-    habitDay, habitMark, habitTimeText,
+    toNum, fromNum, addDays, daysBetween, weekday, daysInMonth, isDate, isTime, toMin, fromMin, weekFrom, monthRange,
+    holidays, holidayName, FREQS, freqsFor, nthOfMonth, occurrences, dayView, itemsByDay, monthItems, weekItems, upcoming, search, searchNotes,
+    layoutDay, habitDay, habitMark, habitTimeText, habitWeek, habitLeft,
   };
 })();
 

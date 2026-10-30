@@ -139,6 +139,57 @@ main {
 }
 .more { font-size: 10px; line-height: 12px; color: var(--muted); padding-left: 3px; }
 
+/* カレンダーの上の「月／週」と色の絞り込み（仕様書 D33・D34） */
+.cal-tools { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; }
+.cal-tools ~ .cal-wrap { margin-top: 0; }
+.seg2.seg-sm { padding: 2px; border-radius: 9px; flex: none; }
+.seg2.seg-sm button { padding: 4px 14px; font-size: 14px; }
+.cfilter { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; min-width: 0; }
+.search + .cfilter { margin: -4px 0 10px; }
+.cf { width: 26px; height: 30px; border: 0; background: none; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.cf i { display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--ec); }
+.cf.on i { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ec); }
+.cfilter.some .cf:not(.on) i { opacity: .28; }
+.cf-all { font-size: 14px; padding: 4px 6px; }
+.link.sm { font-size: 14px; padding: 6px 4px; white-space: nowrap; }
+
+/* ひとことメモ（仕様書 2.14） */
+.note-in { display: block; width: 100%; margin: 0 0 6px; border: 1px solid var(--line); background: var(--card); border-radius: 9px; padding: 7px 10px; font-size: 16px; }
+.cal-day.has-note .num { position: relative; }
+.cal-day.has-note .num::after { content: ""; position: absolute; right: -3px; top: 1px; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); }
+.note-row .ev-sub .tag { margin-left: 0; }
+
+/* 週の表示（仕様書 2.15） */
+.wv { margin: 0 -16px; }
+.wv-row, .wv-grid { display: grid; grid-template-columns: 34px repeat(7, minmax(0, 1fr)); }
+.wv-head { border-bottom: 1px solid var(--line); }
+.wv-day { border: 0; background: none; padding: 2px 0 4px; display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--muted); }
+.wv-day .num { width: 24px; height: 24px; line-height: 24px; border-radius: 50%; text-align: center; font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; }
+.wv-day.sun, .wv-day.sun .num { color: var(--sun); }
+.wv-day.sat, .wv-day.sat .num { color: var(--sat); }
+.wv-day.sel .num { background: var(--track); }
+.wv-day.today .num { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.wv-gut { font-size: 10px; color: var(--muted); text-align: right; padding-right: 4px; }
+.wv-allday { border-bottom: 1px solid var(--line); padding: 2px 0; }
+.wv-allday .wv-gut { align-self: center; }
+.wv-adcol { min-width: 0; display: flex; flex-direction: column; gap: 1px; padding: 0 1px; }
+.wv-adcol .chip-ev { border: 0; border-left: 2px solid var(--ec); text-align: left; font: inherit; font-size: 10px; line-height: 14px; }
+.wv-body { overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+.wv-grid { position: relative; background: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 44px); }
+.wv-grid > .wv-gut { position: relative; background: var(--bg); }
+.wv-grid > .wv-gut span { position: absolute; right: 4px; transform: translateY(-50%); line-height: 1; font-variant-numeric: tabular-nums; }
+.wv-col { position: relative; min-width: 0; border-left: 1px solid var(--line); }
+.wv-col.sel { background: color-mix(in srgb, var(--track) 55%, transparent); }
+.wv-ev {
+  position: absolute; border: 0; padding: 1px 3px; overflow: hidden; text-align: left; border-radius: 4px;
+  background: color-mix(in srgb, var(--ec) 24%, var(--card)); border-left: 3px solid var(--ec); color: var(--text);
+  display: flex; flex-direction: column; font-size: 10px; line-height: 12px; box-shadow: 0 0 0 1px var(--card);
+}
+.wv-ev b { font-weight: 600; overflow-wrap: anywhere; }
+.wv-ev span { color: var(--text2); font-variant-numeric: tabular-nums; }
+.wv-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); pointer-events: none; z-index: 1; }
+.week-panel h2 .muted { font-weight: 400; font-size: 13px; color: var(--muted); }
+
 /* 選んでいる日の予定 */
 .day-panel h2 { font-size: 15px; margin: 2px 2px 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 0 8px; }
 .day-panel h2 .tag { margin-left: 0; }
@@ -219,6 +270,28 @@ main {
 .hb-d.before, .hb-d.future { opacity: .55; }
 .hb-d.today { box-shadow: inset 0 0 0 2px var(--accent); }
 .hb-sum { margin: 10px 2px 0; font-size: 14px; }
+/* 週◯回（仕様書 D31） */
+.hb-goal { font-size: 13px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.hb-goal.ok { color: var(--c-green); font-weight: 600; }
+.hb-cal.wk { grid-template-columns: repeat(7, minmax(0, 1fr)) 1.3fr; }
+.hb-wk { min-height: 42px; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; color: var(--muted); border-left: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.hb-wk b { font-size: 14px; line-height: 16px; height: 16px; }
+.hb-wk.done b { color: var(--c-green); }
+.hb-wk.miss b { color: var(--danger); }
+.hb-d.free b { color: transparent; }
+.hb-plan .seg2 { min-width: 10em; }
+/* 1年の記録（仕様書 D32） */
+.hb-seg { margin: 4px 0 6px; }
+.hb-year { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.hb-mini { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 5px 6px 7px; text-align: left; }
+.hb-mini-t { display: block; font-size: 12px; color: var(--text2); margin-bottom: 3px; }
+.hb-dots { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.hb-dots i { display: block; aspect-ratio: 1; border-radius: 50%; background: var(--track); }
+.hb-dots i.blank, .hb-dots i.future { background: none; }
+.hb-dots i.done { background: var(--c-green); }
+.hb-dots i.miss { background: var(--danger); }
+.hb-dots i.off, .hb-dots i.before { opacity: .45; }
+.hb-dots i.today { box-shadow: 0 0 0 1.5px var(--accent); }
 .row-line.hb-days-in { flex-direction: column; align-items: stretch; gap: 0; padding-top: 10px; }
 .wd-btns { display: flex; justify-content: space-between; padding: 8px 0 12px; }
 .wd-btns button { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); font-size: 14px; padding: 0; }
@@ -252,9 +325,11 @@ main {
   padding: 6px 8px; font-size: 16px; min-height: 38px; min-width: 0;
 }
 .entry.all-day input[type=time] { display: none; }
-/* 「◯月中」（仕様書 2.12）：日付と時刻の行の代わりに月を選ぶ */
-.entry.in-month .not-month, .entry:not(.in-month) .month-line { display: none; }
-.month-line input {
+/* 「◯月中」「◯週中」（仕様書 2.12・2.13）：日付と時刻の行の代わりに月・週を選ぶ */
+.entry.in-month .day-line, .entry.in-week .day-line, .entry:not(.in-month) .month-line, .entry:not(.in-week) .week-line { display: none; }
+.wk-range { align-self: center; color: var(--text2); font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.week-line input, .row-line select[name=mode] { max-width: 11em; }
+.week-line input, .month-line input {
   border: 1px solid var(--line); background: var(--bg); border-radius: 9px;
   padding: 6px 8px; font-size: 16px; min-height: 38px; min-width: 0;
 }

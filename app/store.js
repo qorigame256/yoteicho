@@ -8,13 +8,16 @@ const Store = (() => {
   const DAY_START = 4; // 毎日のやることのチェックが外れる時刻（仕様書 2.11）
   const TABS = ["cal", "list", "daily", "settings"]; // 下のタブの最初の並び（仕様書 2.10）
   const MONTH_FREQS = ["monthly", "yearly"]; // 「◯月中」の予定で選べる繰り返し（仕様書 D27）
+  const WEEK_FREQS = ["weekly", "biweekly"]; // 「◯週中」の予定で選べる繰り返し（仕様書 D35）
+  const NOTE_MAX = 200; // ひとことメモの文字数（仕様書 2.14）
 
   function fresh() {
     return {
       version: 1,
       events: [],
       habits: [],
-      settings: { weekStart: 0, dayStart: DAY_START, tabOrder: TABS.slice(), lastExport: null, startedAt: null, backupAskedAt: null },
+      notes: {},
+      settings: { weekStart: 0, dayStart: DAY_START, tabOrder: TABS.slice(), badge: false, lastExport: null, startedAt: null, backupAskedAt: null },
     };
   }
 
@@ -43,7 +46,7 @@ const Store = (() => {
       const habits = Array.isArray(d.habits) ? d.habits.filter(isHabit) : [];
       // 読めない予定・やることがあったら、元の中身を残してから進む
       if (events.length !== d.events.length || (d.habits != null && (!Array.isArray(d.habits) || habits.length !== d.habits.length))) keepBroken(raw);
-      return { version: 1, events: events.map(clean), habits: habits.map(cleanHabit), settings: cleanSettings(d.settings) };
+      return { version: 1, events: events.map(clean), habits: habits.map(cleanHabit), notes: cleanNotes(d.notes), settings: cleanSettings(d.settings) };
     } catch (e) {
       keepBroken(raw);
       return fresh();
@@ -76,6 +79,13 @@ const Store = (() => {
       if (e.start.slice(8) !== "01" || e.end !== e.start || !e.allDay) return false;
       if (e.repeat != null && !MONTH_FREQS.includes(e.repeat.freq)) return false;
     }
+    // 「◯週中」：週の最初の日に始まって同じ日に終わる終日の予定で、繰り返しは毎週・2週ごとだけ（仕様書 2.13）。
+    // 週の最初の日かどうかは設定によるので、ここでは確かめない
+    if (e.inWeek != null && typeof e.inWeek !== "boolean") return false;
+    if (e.inWeek) {
+      if (e.inMonth || e.end !== e.start || !e.allDay) return false;
+      if (e.repeat != null && !WEEK_FREQS.includes(e.repeat.freq)) return false;
+    }
     if (!e.allDay) {
       if (!Cal.isTime(e.startTime) || !Cal.isTime(e.endTime)) return false;
       if (Cal.toMin(e.end, e.endTime) < Cal.toMin(e.start, e.startTime)) return false;
@@ -98,6 +108,7 @@ const Store = (() => {
       end: e.end,
       allDay: e.allDay,
       inMonth: e.inMonth === true,
+      inWeek: e.inWeek === true,
       startTime: e.allDay ? null : e.startTime,
       endTime: e.allDay ? null : e.endTime,
       color: COLORS.includes(e.color) ? e.color : "blue",
@@ -117,6 +128,8 @@ const Store = (() => {
     if (!Array.isArray(x.days) || !x.days.length || !x.days.every((w) => Number.isInteger(w) && w >= 0 && w <= 6)) return false;
     if (!Cal.isDate(x.since)) return false;
     if (!Array.isArray(x.done) || !x.done.every(Cal.isDate)) return false;
+    // 週◯回（仕様書 D31）。null か 1〜6
+    if (x.perWeek != null && !(Number.isInteger(x.perWeek) && x.perWeek >= 1 && x.perWeek <= 6)) return false;
     return true;
   }
   function cleanAt(at, done) {
@@ -129,12 +142,38 @@ const Store = (() => {
     return {
       id: x.id,
       title: x.title,
-      days: [...new Set(x.days)].sort(),
+      // 週◯回のものは、どの曜日でも付けられるよう曜日を全部にする
+      days: x.perWeek ? [0, 1, 2, 3, 4, 5, 6] : [...new Set(x.days)].sort(),
+      perWeek: x.perWeek || null,
       since: x.since,
       done: [...new Set(x.done)].sort(),
       doneAt: cleanAt(x.doneAt, x.done),
       createdAt: str(x.createdAt) ? x.createdAt : null,
     };
+  }
+
+  // ひとことメモ（仕様書 2.14・3）。{ 日付: 1行の文 }。正しくないもの・空のものは捨てて読み、壊れた扱いにはしない
+  const cleanNote = (v) => (str(v) ? v.replace(/\s+/g, " ").trim().slice(0, NOTE_MAX) : "");
+  function cleanNotes(n) {
+    const out = {};
+    if (!n || typeof n !== "object" || Array.isArray(n)) return out;
+    for (const d of Object.keys(n).sort()) if (Cal.isDate(d) && cleanNote(n[d])) out[d] = cleanNote(n[d]);
+    return out;
+  }
+
+  // 週の始まりを変えたら、「◯週中」の予定を新しい週の最初の日へずらす（同じ週を指し続けるように。仕様書 2.13）。
+  // 日曜→月曜は1日後ろ、月曜→日曜は1日前
+  function moveWeek(e, d) {
+    const mv = (s) => Cal.addDays(s, d);
+    return {
+      ...e, start: mv(e.start), end: mv(e.end), skips: e.skips.map(mv),
+      repeat: e.repeat ? { ...e.repeat, until: e.repeat.until && mv(e.repeat.until) } : null,
+    };
+  }
+  function setWeekStart(data, weekStart) {
+    const d = weekStart - data.settings.weekStart;
+    data.settings.weekStart = weekStart;
+    if (d) data.events = data.events.map((e) => (e.inWeek ? moveWeek(e, d) : e));
   }
 
   // 4つのタブを1つずつ含む並びか
@@ -146,23 +185,31 @@ const Store = (() => {
       weekStart: s.weekStart === 1 ? 1 : 0,
       dayStart: Number.isInteger(s.dayStart) && s.dayStart >= 0 && s.dayStart <= 23 ? s.dayStart : DAY_START,
       tabOrder: isTabOrder(s.tabOrder) ? s.tabOrder.slice() : TABS.slice(),
+      badge: s.badge === true,
       lastExport: date(s.lastExport),
       startedAt: date(s.startedAt),
       backupAskedAt: date(s.backupAskedAt),
     };
   }
 
+  // 予定・やること・ひとことメモが1つも無いか
+  const isEmpty = (data) => data.events.length === 0 && data.habits.length === 0 && Object.keys(data.notes).length === 0;
+
   // 読み込んだバックアップを今のデータに足し合わせる（仕様書 2.8）。足した・飛ばした・壊れていた件数を返す。
   // 今に無い id の予定・やることだけ足し、同じ id は今のまま（habits は足したやることの件数。broken は両方の合計）。
-  // 予定もやることも無い端末なら、週の始まり・チェックが外れる時刻・タブの並びもファイルどおりにする
+  // ひとことメモは今に無い日の分だけ足す（notes は足した日数）。
+  // 予定もやることもメモも無い端末なら、週の始まり・チェックが外れる時刻・タブの並びもファイルどおりにする
   function merge(data, incoming, today) {
-    const result = { added: 0, skipped: 0, broken: 0, habits: 0 };
-    const wasEmpty = data.events.length === 0 && data.habits.length === 0;
+    const result = { added: 0, skipped: 0, broken: 0, habits: 0, notes: 0 };
+    const wasEmpty = isEmpty(data);
+    const s = incoming.settings && typeof incoming.settings === "object" ? incoming.settings : {};
+    // ファイルと週の始まりが違えば、ファイルの「◯週中」の予定をこの端末の週の最初の日へずらす（setWeekStart と同じ考え方）
+    const d = wasEmpty ? 0 : data.settings.weekStart - (s.weekStart === 1 ? 1 : 0);
     const have = new Set(data.events.map((e) => e.id));
     for (const e of Array.isArray(incoming.events) ? incoming.events : []) {
       if (!isEvent(e)) { result.broken++; continue; }
       if (have.has(e.id)) { result.skipped++; continue; }
-      data.events.push(clean(e));
+      data.events.push(e.inWeek && d ? moveWeek(clean(e), d) : clean(e));
       have.add(e.id);
       result.added++;
     }
@@ -174,16 +221,25 @@ const Store = (() => {
       haveH.add(x.id);
       result.habits++;
     }
-    const s = incoming.settings && typeof incoming.settings === "object" ? incoming.settings : {};
+    const notes = cleanNotes(incoming.notes);
+    for (const d of Object.keys(notes)) {
+      if (data.notes[d]) continue;
+      data.notes[d] = notes[d];
+      result.notes++;
+    }
+    // 空の端末では、週の始まりもファイルどおりにするので「◯週中」の予定はずらさない
     if (wasEmpty && (s.weekStart === 0 || s.weekStart === 1)) data.settings.weekStart = s.weekStart;
     if (wasEmpty && Number.isInteger(s.dayStart) && s.dayStart >= 0 && s.dayStart <= 23) data.settings.dayStart = s.dayStart;
     if (wasEmpty && isTabOrder(s.tabOrder)) data.settings.tabOrder = s.tabOrder.slice();
     // この端末で使い始めた日（書き出しの催促はここから数える）
-    if ((result.added || result.habits) && !data.settings.startedAt) data.settings.startedAt = today;
+    if ((result.added || result.habits || result.notes) && !data.settings.startedAt) data.settings.startedAt = today;
     return result;
   }
 
-  return { init, load, save, newId, isEvent, clean, isHabit, cleanHabit, merge, fresh, COLORS, TITLE_MAX, MEMO_MAX, TABS, MONTH_FREQS };
+  return {
+    init, load, save, newId, isEvent, clean, isHabit, cleanHabit, cleanNote, isEmpty, setWeekStart, merge, fresh,
+    COLORS, TITLE_MAX, MEMO_MAX, NOTE_MAX, TABS, MONTH_FREQS, WEEK_FREQS,
+  };
 })();
 
 if (typeof module !== "undefined") module.exports = Store; // Node（tools/test.js）から読むとき
