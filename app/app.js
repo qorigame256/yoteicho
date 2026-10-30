@@ -4,8 +4,8 @@ const view = document.getElementById("view");
 const titleEl = document.getElementById("title");
 const leftEl = document.getElementById("tb-left");
 const addBtn = document.getElementById("add");
-const TAB_NAMES = { cal: "カレンダー", list: "一覧", daily: "毎日", settings: "設定" }; // 下のタブの名前
-const TITLES = { cal: "カレンダー", list: "一覧", daily: "毎日のやること", settings: "設定" };
+const TAB_NAMES = { cal: "カレンダー", list: "一覧", daily: "毎日", koro: "ころあい", settings: "設定" }; // 下のタブの名前
+const TITLES = { cal: "カレンダー", list: "一覧", daily: "毎日のやること", koro: "ころあい", settings: "設定" };
 const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
 const FREQ_NAMES = { daily: "毎日", weekly: "毎週", biweekly: "2週ごと", monthly: "毎月", monthlyNth: "毎月", monthlyLast: "毎月", yearly: "毎年" };
 const COLOR_NAMES = { red: "赤", orange: "橙", yellow: "黄", green: "緑", cyan: "水色", blue: "青", purple: "紫", gray: "灰" };
@@ -115,6 +115,7 @@ document.querySelectorAll(".tabs button").forEach((b) => {
 addBtn.addEventListener("click", () => {
   if (!data) return;
   if (tab === "daily") showHabitEditor(null);
+  else if (tab === "koro") showKoroEditor(null);
   else openNew(tab === "cal" ? selected : today());
 });
 
@@ -130,7 +131,7 @@ function render() {
   leftEl.innerHTML = "";
   titleEl.textContent = TITLES[tab];
   view.innerHTML = "";
-  ({ cal: renderCal, list: renderList, daily: renderDaily, settings: renderSettings })[tab]();
+  ({ cal: renderCal, list: renderList, daily: renderDaily, koro: renderKoro, settings: renderSettings })[tab]();
   updateBadge();
 }
 
@@ -795,6 +796,221 @@ function showHabitEditor(x) {
   if (!x) f.title.focus();
 }
 
+// ---------- ころあい（仕様書 2.17） ----------
+// 最初に選べる「おすすめ」（D38）。[名前, 何日ごと]
+const KORO_PRESETS = [
+  ["シーツを洗う", 14], ["布団を干す", 14], ["歯ブラシを替える", 30], ["排水口の掃除", 30], ["美容院", 60],
+  ["エアコンのフィルター掃除", 90], ["換気扇の掃除", 90], ["冷蔵庫の中の掃除", 90], ["観葉植物の水やり", 7],
+];
+const KORO_UNITS = { day: 1, week: 7, month: 30 }; // 1か月は30日として数える
+// 「2週ごと」「3か月ごと」「10日ごと」。割り切れる大きい単位で書く
+function everyText(n) {
+  return n % 30 === 0 ? `${n / 30}か月ごと` : n % 7 === 0 ? `${n / 7}週ごと` : `${n}日ごと`;
+}
+// 目安までの書き方（色の印の中の文）
+function koroStatus(s) {
+  if (s.level === "none") return "記録なし";
+  return s.left > 0 ? `あと${s.left}日` : s.left === 0 ? "今日がころあい" : `${-s.left}日過ぎ`;
+}
+const agoText = (n) => (n === 0 ? "今日" : n === 1 ? "昨日" : n > 0 ? `${n}日前` : `${-n}日後`);
+
+function renderKoro() {
+  const now = today();
+  if (!data.koro.length) {
+    view.appendChild(h(`<p class="empty">ころあいはまだありません<br><span class="hint">ときどきやることを、前回やった日で見守ります。<br>右上の「＋」か、下のおすすめから足せます</span></p>`));
+    view.appendChild(koroPresetCard());
+    return;
+  }
+  const list = Cal.koroSort(data.koro, now);
+  const due = list.filter((x) => ["soon", "over"].includes(Cal.koroState(x, now).level)).length;
+  view.appendChild(h(`<div class="hb-head"><h2>${dayLabel(now)}</h2><span class="${due ? "" : "hb-all"}">${due ? `そろそろ ${due} 件` : "急ぐものはありません"}</span></div>`));
+  const sec = h(`<section class="day hb-list ko-list"></section>`);
+  for (const x of list) sec.appendChild(koroRow(x, now));
+  view.appendChild(sec);
+  view.appendChild(h(`<p class="hint hb-foot">前回から決めた日数の8割を過ぎると黄、目安の日を過ぎると赤になります。急ぐものほど上に並びます。</p>`));
+  // まだ足していないおすすめがあれば、いちばん下から開ける
+  if (KORO_PRESETS.some(([t]) => !data.koro.some((x) => x.title === t))) {
+    const more = h(`<p class="ko-more"><button type="button" class="link sm">おすすめから足す</button></p>`);
+    more.querySelector("button").addEventListener("click", () => {
+      const wrap = h(`<div><div class="sheet-head"><h2>おすすめから足す</h2><button type="button" class="icon-btn" aria-label="閉じる">✕</button></div></div>`);
+      wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+      wrap.appendChild(koroPresetCard());
+      openSheet(wrap);
+    });
+    view.appendChild(more);
+  }
+}
+
+// おすすめの一覧。押すと、その名前と日数を入れた足す画面を開く（足してある名前は出さない）
+function koroPresetCard() {
+  const card = h(`<section class="card"><h2>おすすめ</h2><div class="ko-presets"></div><p class="hint">押すと名前と日数が入った画面が開きます。日数は変えられます。</p></section>`);
+  const box = card.querySelector(".ko-presets");
+  for (const [title, every] of KORO_PRESETS) {
+    if (data.koro.some((x) => x.title === title)) continue;
+    const b = h(`<button type="button" class="ko-preset"><span>${esc(title)}</span><span class="tag">${everyText(every)}</span></button>`);
+    b.addEventListener("click", () => showKoroEditor(null, { title, every }));
+    box.appendChild(b);
+  }
+  return card;
+}
+
+// 1行：左の色の帯・名前と前回・「やった」ボタン
+function koroRow(x, now) {
+  const s = Cal.koroState(x, now);
+  const doneToday = s.last === now;
+  const row = h(`<div class="ko-row ko-${s.level}"></div>`);
+  const sub = s.last ? `前回 ${shortDate(s.last)}（${agoText(s.since)}）` : "まだ記録がありません";
+  const main = h(`<button type="button" class="hb-main" aria-label="${esc(`${x.title}の記録。${everyText(x.every)}。${koroStatus(s)}。${sub}`)}">
+    <span class="hb-title">${esc(x.title)}<span class="tag">${everyText(x.every)}</span></span>
+    <span class="ko-sub" aria-hidden="true">${s.last ? `<b class="ko-st">${koroStatus(s)}</b>` : ""}<span>${sub}</span></span>
+  </button>`);
+  main.addEventListener("click", () => showKoroLog(x));
+  row.appendChild(main);
+  // 今日やったものは、もう一度押すと今日の記録を消す（押し間違いの戻し方の1つ）
+  const btn = h(`<button type="button" class="ko-did${doneToday ? " on" : ""}" aria-pressed="${doneToday}">${doneToday ? "✓ 今日" : "やった"}</button>`);
+  btn.setAttribute("aria-label", doneToday ? `${x.title}の今日の記録を消す` : `${x.title}を今日やったと記録する`);
+  btn.addEventListener("click", () => (doneToday ? koroRemoveDay(x, now) : koroAddDay(x, now)));
+  row.appendChild(btn);
+  return row;
+}
+
+// 記録を足す・消す。どちらもお知らせに「取り消す」を付ける
+function koroAddDay(x, day) {
+  if (x.done.includes(day)) return;
+  const before = x.done;
+  x.done = [...x.done, day].sort();
+  if (!commit(() => { x.done = before; })) return;
+  render();
+  toast(`「${x.title}」を${day === today() ? "今日" : ` ${shortDate(day)} に`}やったと記録しました`, () => { x.done = before; save(); render(); refreshKoroLog(x); });
+}
+function koroRemoveDay(x, day) {
+  const before = x.done;
+  x.done = x.done.filter((d) => d !== day);
+  if (!commit(() => { x.done = before; })) return;
+  render();
+  toast(`${shortDate(day)} の記録を消しました`, () => { x.done = before; save(); render(); refreshKoroLog(x); });
+}
+
+// 記録の画面がその項目のまま開いていれば描き直す（お知らせの「取り消す」を押したとき）
+function refreshKoroLog(x) {
+  if (!sheet.hidden && sheet.querySelector(`[data-koro="${x.id}"]`)) showKoroLog(x);
+}
+// 記録の画面（1行を押すと出る）：今の様子・平均の間隔・日付を選んで記録・これまでの記録
+function showKoroLog(x) {
+  if (!data.koro.includes(x)) return closeSheet(); // 取り消しなどで消えた
+  const now = today();
+  const s = Cal.koroState(x, now);
+  const avg = Cal.koroAverage(x);
+  const wrap = h(`<div><div class="sheet-head"><h2>${esc(x.title)}</h2><button type="button" class="icon-btn" aria-label="閉じる">✕</button></div>
+    <p class="hint">${everyText(x.every)}（${x.every}日）</p>
+    <div class="card ko-now ko-${s.level}">
+      ${s.last ? `<p><b class="ko-st">${koroStatus(s)}</b></p><p>前回 ${longDate(s.last)}（${agoText(s.since)}）<br>次の目安 ${dayLabel(s.next)}</p>` : `<p>まだ記録がありません。</p>`}
+      <p class="hint">${avg == null ? "記録が2回以上になると、実際の間隔の平均が出ます。" : `実際には平均 <b>${Math.round(avg * 10) / 10}</b> 日ごと（記録 ${x.done.length} 回）`}</p>
+    </div>
+    <label class="row-line ko-pick"><span>日付を選んで記録</span><span class="dt"><input type="date" max="${now}" value="${now}" aria-label="やった日"><button type="button" class="btn">記録</button></span></label>
+    <h3 class="ko-h">これまでの記録</h3>
+    <div class="ko-log"></div>
+    <div class="actions hb-act"><button type="button" class="btn">変える</button></div></div>`);
+  wrap.dataset.koro = x.id;
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  const pick = wrap.querySelector(".ko-pick input");
+  wrap.querySelector(".ko-pick .btn").addEventListener("click", (e) => {
+    e.preventDefault();
+    const d = pick.value;
+    if (!Cal.isDate(d) || d > now) return toast("今日までの日付を選んでください");
+    if (x.done.includes(d)) return toast(`${shortDate(d)} はもう記録してあります`);
+    koroAddDay(x, d);
+    showKoroLog(x);
+  });
+  const log = wrap.querySelector(".ko-log");
+  if (!x.done.length) log.appendChild(h(`<p class="hint">ありません</p>`));
+  // 新しい順。前の記録からの日数も添える
+  for (let i = x.done.length - 1; i >= 0; i--) {
+    const d = x.done[i];
+    const gap = i > 0 ? Cal.daysBetween(x.done[i - 1], d) : null;
+    const r = h(`<div class="ko-log-row"><span>${dayLabel(d)}${d.slice(0, 4) !== now.slice(0, 4) ? `<span class="hint">${d.slice(0, 4)}年</span>` : ""}</span>
+      <span class="hint">${gap == null ? "" : `前から ${gap}日`}</span>
+      <button type="button" class="icon-btn" aria-label="${esc(`${dayLabel(d)}の記録を消す`)}">✕</button></div>`);
+    r.querySelector("button").addEventListener("click", () => { koroRemoveDay(x, d); showKoroLog(x); });
+    log.appendChild(r);
+  }
+  wrap.querySelector(".hb-act .btn").addEventListener("click", () => showKoroEditor(x));
+  openSheet(wrap);
+}
+
+// 足す・変える。preset はおすすめから開いたときの名前と日数
+function showKoroEditor(x, preset) {
+  const now = today();
+  const every = x ? x.every : preset ? preset.every : 14;
+  // 割り切れる大きい単位で出す
+  const unit = every % 30 === 0 ? "month" : every % 7 === 0 ? "week" : "day";
+  const wrap = h(`<div><div class="sheet-head"><h2>${x ? "ころあいの変更" : "ころあいを足す"}</h2><button type="button" class="icon-btn" aria-label="閉じる">✕</button></div></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  const form = h(`<form class="entry" novalidate>
+    <input class="title-in" name="title" placeholder="やること（例：シーツを洗う）" maxlength="${Store.TITLE_MAX}" autocomplete="off" enterkeyhint="done">
+    <label class="row-line"><span>だいたい</span><span class="dt"><input type="number" name="n" inputmode="numeric" min="1" step="1" class="ko-n" aria-label="間隔の数"><select name="unit" aria-label="間隔の単位"><option value="day">日</option><option value="week">週</option><option value="month">か月</option></select><span class="ko-goto">ごと</span></span></label>
+    ${x ? "" : `<label class="row-line"><span>前回やった日</span><span class="dt"><input type="date" name="last" max="${now}"></span></label>
+    <label class="row-line"><span>まだやっていない</span><input type="checkbox" name="never"></label>`}
+    <p class="hint">1か月は30日として数えます。前回から、この日数の8割を過ぎると黄、過ぎると赤になります。</p>
+    <p class="form-error" role="alert"></p>
+    <div class="actions">${x ? `<button type="button" class="btn danger" data-act="del">削除</button>` : ""}<button type="submit" class="btn primary">${x ? "保存" : "足す"}</button></div>
+  </form>`);
+  const f = form.elements;
+  f.title.value = x ? x.title : preset ? preset.title : "";
+  f.unit.value = unit;
+  f.n.value = String(every / KORO_UNITS[unit]);
+  if (!x) {
+    f.last.value = now;
+    f.never.addEventListener("change", () => { f.last.disabled = f.never.checked; });
+  }
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const title = f.title.value.trim();
+    const n = Number(f.n.value);
+    const days = n * KORO_UNITS[f.unit.value];
+    const last = x || f.never.checked ? null : f.last.value;
+    const msg = !title ? "やることを入れてください"
+      : !Number.isInteger(n) || n < 1 ? "間隔は1以上の整数で入れてください"
+      : days > Store.EVERY_MAX ? `間隔は ${Store.EVERY_MAX}日（約10年）までです`
+      : !x && !f.never.checked && (!Cal.isDate(last) || last > now) ? "前回やった日は今日までの日付を選んでください" : null;
+    form.querySelector(".form-error").textContent = msg || "";
+    if (msg) return;
+    const before = { koro: data.koro.slice(), startedAt: data.settings.startedAt };
+    if (x) {
+      const i = data.koro.indexOf(x);
+      if (i < 0) return closeSheet(); // 開いているあいだに消された
+      data.koro[i] = Store.cleanKoro({ ...x, title, every: days });
+    } else {
+      data.koro.push(Store.cleanKoro({ id: Store.newId(), title, every: days, done: last ? [last] : [], createdAt: new Date().toISOString() }));
+      if (!data.settings.startedAt) data.settings.startedAt = now;
+    }
+    if (!commit(() => { data.koro = before.koro; data.settings.startedAt = before.startedAt; })) return;
+    closeSheet();
+    render();
+    toast(x ? "変えました" : "ころあいを足しました");
+  });
+
+  const del = form.querySelector("[data-act=del]");
+  if (del) del.addEventListener("click", () => {
+    if (!confirm(`「${x.title}」を消しますか？これまでの記録も消えます。`)) return;
+    const i = data.koro.indexOf(x);
+    if (i < 0) return closeSheet();
+    data.koro.splice(i, 1);
+    if (!commit(() => data.koro.splice(i, 0, x))) return;
+    closeSheet();
+    render();
+    toast("消しました", () => {
+      data.koro.splice(Math.min(i, data.koro.length), 0, x);
+      save(); render();
+    });
+  });
+
+  wrap.appendChild(form);
+  openSheet(wrap);
+  if (!x && !preset) f.title.focus();
+}
+
 // ---------- 設定 ----------
 function renderSettings() {
   const ws = h(`<section class="card"><h2>週の始まり</h2>
@@ -883,8 +1099,8 @@ function renderSettings() {
   const last = data.settings.lastExport;
   const overdue = backupOverdue();
   const bk = h(`<section class="card"><h2>バックアップ</h2>
-    <p class="hint">予定と毎日のやること・ひとことメモはこの端末の中だけにあります。機種変更や万一に備えて、ときどき書き出してください（iPhone では「"ファイル"に保存」を選びます）。</p>
-    <p>予定 ${data.events.length} 件・毎日のやること ${data.habits.length} 件・ひとことメモ ${Object.keys(data.notes).length} 日<br>最後に書き出した日：${last ? esc(longDate(last)) : "まだありません"}</p>
+    <p class="hint">予定と毎日のやること・ころあい・ひとことメモはこの端末の中だけにあります。機種変更や万一に備えて、ときどき書き出してください（iPhone では「"ファイル"に保存」を選びます）。</p>
+    <p>予定 ${data.events.length} 件・毎日のやること ${data.habits.length} 件・ころあい ${data.koro.length} 件・ひとことメモ ${Object.keys(data.notes).length} 日<br>最後に書き出した日：${last ? esc(longDate(last)) : "まだありません"}</p>
     ${overdue != null ? `<p class="notice">${last ? `最後に書き出してから ${overdue} 日たっています。` : "まだ一度も書き出していません。"}</p>` : ""}
     <div class="actions"><button type="button" class="btn" data-act="import">読み込む</button><button type="button" class="btn primary" data-act="export">書き出す</button></div>
     <input type="file" accept="application/json,.json" hidden>
@@ -910,7 +1126,7 @@ function renderSettings() {
   view.appendChild(ps);
 
   view.appendChild(h(`<section class="card"><h2>このアプリについて</h2>
-    <p class="hint">予定と毎日のやること・ひとことメモはこの端末の中だけに保存され、ネットには送られません。予定の時刻の通知はありません。</p>
+    <p class="hint">予定と毎日のやること・ころあい・ひとことメモはこの端末の中だけに保存され、ネットには送られません。予定の時刻の通知はありません。</p>
     <p class="hint">祝日は 2007〜2099 年に対応しています（春分の日・秋分の日は計算による予測です）。</p>
   </section>`));
 }
@@ -1254,7 +1470,7 @@ async function importData(f) {
   const r = Store.merge(data, incoming, today());
   save();
   render();
-  toast(`予定 ${r.added} 件` + (r.habits ? `・毎日のやること ${r.habits} 件` : "") + (r.notes ? `・ひとことメモ ${r.notes} 日` : "") + "を足しました" + (r.skipped ? `（同じ予定 ${r.skipped} 件は飛ばしました）` : "") + (r.broken ? `　壊れた予定 ${r.broken} 件は読めませんでした` : ""));
+  toast(`予定 ${r.added} 件` + (r.habits ? `・毎日のやること ${r.habits} 件` : "") + (r.koro ? `・ころあい ${r.koro} 件` : "") + (r.notes ? `・ひとことメモ ${r.notes} 日` : "") + "を足しました" + (r.skipped ? `（同じ予定 ${r.skipped} 件は飛ばしました）` : "") + (r.broken ? `　壊れた予定 ${r.broken} 件は読めませんでした` : ""));
 }
 
 // ---------- 起動 ----------

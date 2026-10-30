@@ -6,16 +6,18 @@ const Store = (() => {
   const TITLE_MAX = 100;
   const MEMO_MAX = 2000;
   const DAY_START = 4; // 毎日のやることのチェックが外れる時刻（仕様書 2.11）
-  const TABS = ["cal", "list", "daily", "settings"]; // 下のタブの最初の並び（仕様書 2.10）
+  const TABS = ["cal", "list", "daily", "koro", "settings"]; // 下のタブの最初の並び（仕様書 2.10）
   const MONTH_FREQS = ["monthly", "yearly"]; // 「◯月中」の予定で選べる繰り返し（仕様書 D27）
   const WEEK_FREQS = ["weekly", "biweekly"]; // 「◯週中」の予定で選べる繰り返し（仕様書 D35）
   const NOTE_MAX = 200; // ひとことメモの文字数（仕様書 2.14）
+  const EVERY_MAX = 3650; // ころあいの「◯日ごと」の上限（仕様書 2.17）
 
   function fresh() {
     return {
       version: 1,
       events: [],
       habits: [],
+      koro: [],
       notes: {},
       settings: { weekStart: 0, dayStart: DAY_START, tabOrder: TABS.slice(), badge: false, lastExport: null, startedAt: null, backupAskedAt: null },
     };
@@ -44,9 +46,11 @@ const Store = (() => {
       const events = d.events.filter(isEvent);
       // 毎日のやることは後から足したので、無い中身（前の版のもの）は空として読む
       const habits = Array.isArray(d.habits) ? d.habits.filter(isHabit) : [];
-      // 読めない予定・やることがあったら、元の中身を残してから進む
-      if (events.length !== d.events.length || (d.habits != null && (!Array.isArray(d.habits) || habits.length !== d.habits.length))) keepBroken(raw);
-      return { version: 1, events: events.map(clean), habits: habits.map(cleanHabit), notes: cleanNotes(d.notes), settings: cleanSettings(d.settings) };
+      const koro = Array.isArray(d.koro) ? d.koro.filter(isKoro) : []; // ころあいも同じ（D38 より前の中身には無い）
+      // 読めない予定・やること・ころあいがあったら、元の中身を残してから進む
+      const lost = (list, ok) => list != null && (!Array.isArray(list) || ok.length !== list.length);
+      if (events.length !== d.events.length || lost(d.habits, habits) || lost(d.koro, koro)) keepBroken(raw);
+      return { version: 1, events: events.map(clean), habits: habits.map(cleanHabit), koro: koro.map(cleanKoro), notes: cleanNotes(d.notes), settings: cleanSettings(d.settings) };
     } catch (e) {
       keepBroken(raw);
       return fresh();
@@ -152,6 +156,17 @@ const Store = (() => {
     };
   }
 
+  // ころあい（仕様書 2.17・3）。every は「◯日ごと」の日数、done はやった日の一覧
+  function isKoro(x) {
+    if (!x || typeof x !== "object" || !str(x.id) || !/^[A-Za-z0-9_-]{1,40}$/.test(x.id)) return false;
+    if (!str(x.title) || !x.title.trim() || x.title.length > TITLE_MAX) return false;
+    if (!Number.isInteger(x.every) || x.every < 1 || x.every > EVERY_MAX) return false;
+    return Array.isArray(x.done) && x.done.every(Cal.isDate);
+  }
+  function cleanKoro(x) {
+    return { id: x.id, title: x.title, every: x.every, done: [...new Set(x.done)].sort(), createdAt: str(x.createdAt) ? x.createdAt : null };
+  }
+
   // ひとことメモ（仕様書 2.14・3）。{ 日付: 1行の文 }。正しくないもの・空のものは捨てて読み、壊れた扱いにはしない
   const cleanNote = (v) => (str(v) ? v.replace(/\s+/g, " ").trim().slice(0, NOTE_MAX) : "");
   function cleanNotes(n) {
@@ -176,15 +191,24 @@ const Store = (() => {
     if (d) data.events = data.events.map((e) => (e.inWeek ? moveWeek(e, d) : e));
   }
 
-  // 4つのタブを1つずつ含む並びか
+  // 全部のタブを1つずつ含む並びか
   const isTabOrder = (v) => Array.isArray(v) && v.length === TABS.length && TABS.every((t) => v.includes(t));
+  // 正しい並びならその写し、おかしければ null。「ころあい」を足す前の4つの並びなら、毎日のすぐ後に足す
+  // （毎日の後ろなので、開いたときのタブ＝左端が「ころあい」に変わることは無い。仕様書 2.10）
+  function cleanTabOrder(v) {
+    if (Array.isArray(v) && v.length === TABS.length - 1 && !v.includes("koro") && v.includes("daily")) {
+      const i = v.indexOf("daily") + 1;
+      v = [...v.slice(0, i), "koro", ...v.slice(i)];
+    }
+    return isTabOrder(v) ? v.slice() : null;
+  }
   function cleanSettings(s) {
     s = s && typeof s === "object" ? s : {};
     const date = (v) => (Cal.isDate(v) ? v : null);
     return {
       weekStart: s.weekStart === 1 ? 1 : 0,
       dayStart: Number.isInteger(s.dayStart) && s.dayStart >= 0 && s.dayStart <= 23 ? s.dayStart : DAY_START,
-      tabOrder: isTabOrder(s.tabOrder) ? s.tabOrder.slice() : TABS.slice(),
+      tabOrder: cleanTabOrder(s.tabOrder) || TABS.slice(),
       badge: s.badge === true,
       lastExport: date(s.lastExport),
       startedAt: date(s.startedAt),
@@ -192,15 +216,15 @@ const Store = (() => {
     };
   }
 
-  // 予定・やること・ひとことメモが1つも無いか
-  const isEmpty = (data) => data.events.length === 0 && data.habits.length === 0 && Object.keys(data.notes).length === 0;
+  // 予定・やること・ころあい・ひとことメモが1つも無いか
+  const isEmpty = (data) => data.events.length === 0 && data.habits.length === 0 && data.koro.length === 0 && Object.keys(data.notes).length === 0;
 
   // 読み込んだバックアップを今のデータに足し合わせる（仕様書 2.8）。足した・飛ばした・壊れていた件数を返す。
-  // 今に無い id の予定・やることだけ足し、同じ id は今のまま（habits は足したやることの件数。broken は両方の合計）。
+  // 今に無い id の予定・やること・ころあいだけ足し、同じ id は今のまま（habits は足したやること、koro は足したころあいの件数。broken は全部の合計）。
   // ひとことメモは今に無い日の分だけ足す（notes は足した日数）。
   // 予定もやることもメモも無い端末なら、週の始まり・チェックが外れる時刻・タブの並びもファイルどおりにする
   function merge(data, incoming, today) {
-    const result = { added: 0, skipped: 0, broken: 0, habits: 0, notes: 0 };
+    const result = { added: 0, skipped: 0, broken: 0, habits: 0, koro: 0, notes: 0 };
     const wasEmpty = isEmpty(data);
     const s = incoming.settings && typeof incoming.settings === "object" ? incoming.settings : {};
     // ファイルと週の始まりが違えば、ファイルの「◯週中」の予定をこの端末の週の最初の日へずらす（setWeekStart と同じ考え方）
@@ -221,6 +245,14 @@ const Store = (() => {
       haveH.add(x.id);
       result.habits++;
     }
+    const haveK = new Set(data.koro.map((x) => x.id));
+    for (const x of Array.isArray(incoming.koro) ? incoming.koro : []) {
+      if (!isKoro(x)) { result.broken++; continue; }
+      if (haveK.has(x.id)) continue;
+      data.koro.push(cleanKoro(x));
+      haveK.add(x.id);
+      result.koro++;
+    }
     const notes = cleanNotes(incoming.notes);
     for (const d of Object.keys(notes)) {
       if (data.notes[d]) continue;
@@ -230,15 +262,15 @@ const Store = (() => {
     // 空の端末では、週の始まりもファイルどおりにするので「◯週中」の予定はずらさない
     if (wasEmpty && (s.weekStart === 0 || s.weekStart === 1)) data.settings.weekStart = s.weekStart;
     if (wasEmpty && Number.isInteger(s.dayStart) && s.dayStart >= 0 && s.dayStart <= 23) data.settings.dayStart = s.dayStart;
-    if (wasEmpty && isTabOrder(s.tabOrder)) data.settings.tabOrder = s.tabOrder.slice();
+    if (wasEmpty && cleanTabOrder(s.tabOrder)) data.settings.tabOrder = cleanTabOrder(s.tabOrder);
     // この端末で使い始めた日（書き出しの催促はここから数える）
-    if ((result.added || result.habits || result.notes) && !data.settings.startedAt) data.settings.startedAt = today;
+    if ((result.added || result.habits || result.koro || result.notes) && !data.settings.startedAt) data.settings.startedAt = today;
     return result;
   }
 
   return {
-    init, load, save, newId, isEvent, clean, isHabit, cleanHabit, cleanNote, isEmpty, setWeekStart, merge, fresh,
-    COLORS, TITLE_MAX, MEMO_MAX, NOTE_MAX, TABS, MONTH_FREQS, WEEK_FREQS,
+    init, load, save, newId, isEvent, clean, isHabit, cleanHabit, isKoro, cleanKoro, cleanNote, isEmpty, setWeekStart, merge, fresh,
+    COLORS, TITLE_MAX, MEMO_MAX, NOTE_MAX, EVERY_MAX, TABS, MONTH_FREQS, WEEK_FREQS,
   };
 })();
 

@@ -364,10 +364,34 @@ const Cal = (() => {
     return habit.days.includes(weekday(today));
   }
 
+  // ---------- ころあい（仕様書 2.17） ----------
+  // 前回やった日・次の目安の日・前回からの日数・目安の日までの日数と、色の段階。level は "ok"（緑）・
+  // "soon"（黄。決めた日数の8割を過ぎた、または目安の日の前の日か当日。D40）・"over"（赤。目安の日を過ぎた）・"none"（記録が無い）
+  function koroState(item, today) {
+    const last = item.done.length ? item.done[item.done.length - 1] : null;
+    if (!last) return { last: null, next: null, since: null, left: null, level: "none" };
+    const since = daysBetween(last, today), left = item.every - since;
+    const level = left < 0 ? "over" : since >= item.every * 0.8 || left <= 1 ? "soon" : "ok";
+    return { last, next: addDays(last, item.every), since, left, level };
+  }
+  // 急ぐ順：赤→黄→緑→記録なし。同じ色の中は「前回からの日数÷決めた日数」の大きい順、それも同じなら今の並び
+  const KORO_RANK = { over: 0, soon: 1, ok: 2, none: 3 };
+  function koroSort(items, today) {
+    return items.map((x, i) => {
+      const s = koroState(x, today);
+      return { x, i, rank: KORO_RANK[s.level], ratio: s.last ? s.since / x.every : 0 };
+    }).sort((a, b) => a.rank - b.rank || b.ratio - a.ratio || a.i - b.i).map((o) => o.x);
+  }
+  // 実際にやった間隔の平均（日）。記録が2つ以上のときだけ
+  function koroAverage(item) {
+    const d = item.done;
+    return d.length >= 2 ? daysBetween(d[0], d[d.length - 1]) / (d.length - 1) : null;
+  }
+
   return {
     toNum, fromNum, addDays, daysBetween, weekday, daysInMonth, isDate, isTime, toMin, fromMin, weekFrom, monthRange,
     holidays, holidayName, FREQS, freqsFor, nthOfMonth, occurrences, dayView, itemsByDay, monthItems, weekItems, upcoming, search, searchNotes,
-    layoutDay, habitDay, habitMark, habitTimeText, habitWeek, habitLeft,
+    layoutDay, habitDay, habitMark, habitTimeText, habitWeek, habitLeft, koroState, koroSort, koroAverage,
   };
 })();
 

@@ -279,6 +279,38 @@ main {
 .hb-wk.done b { color: var(--c-green); }
 .hb-wk.miss b { color: var(--danger); }
 .hb-d.free b { color: transparent; }
+/* ころあい（仕様書 2.17）。左の帯と状態の文の色：緑＝余裕・黄＝もうすぐ・赤＝過ぎた・灰＝記録なし */
+.ko-row, .ko-now { --ko: var(--c-gray); }
+.ko-ok { --ko: var(--c-green); }
+.ko-soon { --ko: var(--c-yellow); }
+.ko-over { --ko: var(--danger); }
+.ko-list { overflow: hidden; }
+.ko-row { display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--line); padding-left: 10px; box-shadow: inset 4px 0 0 var(--ko); margin-left: -12px; }
+.hb-list > .ko-row:first-child { border-top: 0; }
+.ko-row .hb-title .tag { white-space: nowrap; }
+.ko-sub { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 13px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.ko-st { color: var(--ko); font-weight: 700; }
+.ko-row.ko-ok .ko-st { font-weight: 600; }
+.ko-did { flex: none; min-width: 4.6em; min-height: 40px; border: 1.5px solid var(--accent); background: none; color: var(--accent); border-radius: 10px; font-size: 15px; font-weight: 600; padding: 0 10px; }
+.ko-did.on { background: var(--accent); color: var(--accent-ink); }
+.ko-now { border-left: 4px solid var(--ko); margin: 8px 0 4px; }
+.ko-now .ko-st { font-size: 18px; }
+.ko-pick .dt { align-items: center; }
+.ko-pick .btn { padding: 6px 12px; }
+.ko-h { font-size: 14px; margin: 14px 2px 4px; color: var(--text2); }
+.ko-log { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 0 4px 0 12px; max-height: 40vh; overflow-y: auto; }
+.ko-log > .hint { margin: 10px 0; }
+.ko-log-row { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.ko-log-row:first-child { border-top: 0; }
+.ko-log-row > span:first-child { flex: 1; }
+.ko-log-row > span:first-child .hint { margin-left: 6px; font-size: 12px; }
+.ko-log-row .icon-btn { font-size: 16px; color: var(--muted); }
+.ko-presets { display: flex; flex-direction: column; }
+.ko-preset { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; border-top: 1px solid var(--line); background: none; padding: 11px 2px; text-align: left; font-size: 16px; }
+.ko-preset:first-child { border-top: 0; }
+.ko-n { width: 4.5em; text-align: right; }
+.ko-goto { color: var(--text2); align-self: center; }
+.ko-more { text-align: center; margin: 4px 0 0; }
 .hb-plan .seg2 { min-width: 10em; }
 /* 1年の記録（仕様書 D32） */
 .hb-seg { margin: 4px 0 6px; }

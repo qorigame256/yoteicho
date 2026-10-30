@@ -230,6 +230,26 @@ eq("今日まだ残っているか", [
   Cal.habitLeft(hb, "2026-10-29", 0), Cal.habitLeft(hb, "2026-10-28", 0), Cal.habitLeft({ ...hb, done: ["2026-10-29"] }, "2026-10-29", 0),
 ], [true, false, false, true, false, false]);
 
+// ---------- ころあい（仕様書 2.17・D40） ----------
+const kr = (every, done) => ({ id: "k", title: "シーツ", every, done });
+const lv = (every, last, day) => Cal.koroState(kr(every, [last]), day).level;
+eq("ころあいの色 14日ごと（11日め緑・12日め黄・当日黄・過ぎたら赤）",
+  ["2026-10-12", "2026-10-13", "2026-10-15", "2026-10-16"].map((d) => lv(14, "2026-10-01", d)), ["ok", "soon", "soon", "over"]);
+eq("ころあいの色 90日ごと（71日め緑・72日め黄）", [lv(90, "2026-01-01", "2026-03-13"), lv(90, "2026-01-01", "2026-03-14")], ["ok", "soon"]);
+eq("ころあいの色 短いもの（2日ごとは前の日から黄・1日ごとはやった日から黄）",
+  [lv(2, "2026-10-01", "2026-10-01"), lv(2, "2026-10-01", "2026-10-02"), lv(1, "2026-10-01", "2026-10-01"), lv(1, "2026-10-01", "2026-10-03")], ["ok", "soon", "soon", "over"]);
+eq("ころあい 前回・目安の日・日数", Cal.koroState(kr(14, ["2026-09-01", "2026-10-01"]), "2026-10-12"),
+  { last: "2026-10-01", next: "2026-10-15", since: 11, left: 3, level: "ok" });
+eq("ころあい 記録なし", Cal.koroState(kr(14, []), "2026-10-12").level, "none");
+const ks = [
+  { ...kr(14, []), id: "none" }, { ...kr(14, ["2026-10-10"]), id: "ok" }, { ...kr(14, ["2026-09-20"]), id: "over" },
+  { ...kr(10, ["2026-10-04"]), id: "soon" }, { ...kr(7, ["2026-09-20"]), id: "over2" },
+  { ...kr(2, ["2026-10-11"]), id: "soon2" }, { ...kr(14, ["2026-10-01"]), id: "ok2" },
+];
+// soon2（黄・割合0.5）は ok2（緑・割合0.79）より上。色の順が先で、割合はその中だけ
+eq("ころあい 急ぐ順（色の順・同じ色は日数の割合が大きい順・記録なしは最後）", Cal.koroSort(ks, "2026-10-12").map((x) => x.id), ["over2", "over", "soon", "soon2", "ok2", "ok", "none"]);
+eq("ころあい 平均の間隔", [Cal.koroAverage(kr(14, ["2026-10-01", "2026-10-15", "2026-11-01"])), Cal.koroAverage(kr(14, ["2026-10-01"]))], [15.5, null]);
+
 // ---------- 保存（store.js） ----------
 const KEY = "yoteicho.v1";
 const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".broken."));
@@ -285,7 +305,7 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
   mine.settings.startedAt = "2026-10-01";
   const added = Store.clean(ev({ title: "足す予定", start: "2026-10-25" }));
   const r = Store.merge(mine, { app: "yoteicho", events: [{ ...keep, title: "ファイルの予定" }, added, { id: "z", title: "壊れた" }], settings: { weekStart: 1 } }, "2026-10-24");
-  eq("足し合わせ 件数", r, { added: 1, skipped: 1, broken: 1, habits: 0, notes: 0 });
+  eq("足し合わせ 件数", r, { added: 1, skipped: 1, broken: 1, habits: 0, koro: 0, notes: 0 });
   eq("足し合わせ 同じ id は今のまま・週の始まりは変えない", [mine.events.map((e) => e.title), mine.settings.weekStart, mine.settings.startedAt],
     [["今の予定", "足す予定"], 0, "2026-10-01"]);
   const empty = Store.fresh();
@@ -328,7 +348,7 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
   const hm = Store.fresh();
   hm.habits.push(Store.cleanHabit({ ...hb, title: "今のやること" }));
   const hr = Store.merge(hm, { events: [], habits: [{ ...hb, title: "ファイルのやること" }, { ...hb, id: "h2" }, { id: "z" }], settings: { dayStart: 0 } }, "2026-10-29");
-  eq("足し合わせ やること", [hr, hm.habits.map((x) => x.title), hm.settings.dayStart], [{ added: 0, skipped: 0, broken: 1, habits: 1, notes: 0 }, ["今のやること", "ゴミ出し"], 4]);
+  eq("足し合わせ やること", [hr, hm.habits.map((x) => x.title), hm.settings.dayStart], [{ added: 0, skipped: 0, broken: 1, habits: 1, koro: 0, notes: 0 }, ["今のやること", "ゴミ出し"], 4]);
   const he = Store.fresh();
   Store.merge(he, { events: [], habits: [hb], settings: { dayStart: 0 } }, "2026-10-29");
   eq("足し合わせ 空の端末はチェックが外れる時刻も・使い始めた日は今日", [he.habits.length, he.settings.dayStart, he.settings.startedAt], [1, 0, "2026-10-29"]);
@@ -348,13 +368,17 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
     return Store.load().settings.tabOrder.join(",");
   };
   const tabs = [];
-  for (const v of [["daily", "cal", "list", "settings"], ["cal", "cal", "list", "settings"], ["cal", "list", "daily"], "cal", undefined]) tabs.push(await tabsOf(v));
-  eq("タブの並び おかしければ最初の並び", tabs, ["daily,cal,list,settings", "cal,list,daily,settings", "cal,list,daily,settings", "cal,list,daily,settings", "cal,list,daily,settings"]);
+  for (const v of [["daily", "koro", "cal", "list", "settings"], ["cal", "cal", "list", "koro", "settings"], ["cal", "list", "daily", "koro"], "cal", undefined]) tabs.push(await tabsOf(v));
+  eq("タブの並び おかしければ最初の並び", tabs, ["daily,koro,cal,list,settings", "cal,list,daily,koro,settings", "cal,list,daily,koro,settings", "cal,list,daily,koro,settings", "cal,list,daily,koro,settings"]);
+  // ころあいを足す前（D39）の4つの並びは、毎日のすぐ後に足す（左端は変えない）
+  const oldTabs = [];
+  for (const v of [["cal", "list", "daily", "settings"], ["daily", "cal", "list", "settings"], ["settings", "list", "cal", "daily"], ["cal", "list", "settings", "x"]]) oldTabs.push(await tabsOf(v));
+  eq("タブの並び 前の版の4つ", oldTabs, ["cal,list,daily,koro,settings", "daily,koro,cal,list,settings", "settings,list,cal,daily,koro", "cal,list,daily,koro,settings"]);
   const tm = Store.fresh(), te = Store.fresh();
   tm.events.push(Store.clean(one));
   Store.merge(tm, { events: [], settings: { tabOrder: ["settings", "cal", "list", "daily"] } }, "2026-10-27");
   Store.merge(te, { events: [one], settings: { tabOrder: ["settings", "cal", "list", "daily"] } }, "2026-10-27");
-  eq("足し合わせ タブの並びは空の端末だけファイルどおり", [tm.settings.tabOrder[0], te.settings.tabOrder[0]], ["cal", "settings"]);
+  eq("足し合わせ タブの並びは空の端末だけファイルどおり", [tm.settings.tabOrder[0], te.settings.tabOrder], ["cal", ["settings", "cal", "list", "daily", "koro"]]);
 
   // 「◯週中」の予定（仕様書 2.13）
   eq("週中 正しい予定", [Store.isEvent(wk), Store.isEvent(wkOnce), Store.clean(wk).inWeek, Store.clean(one).inWeek], [true, true, true, false]);
@@ -397,6 +421,32 @@ const brokenKeys = () => [...mem.keys()].filter((k) => k.startsWith(KEY + ".brok
   nOnly.notes["2026-10-28"] = "メモだけ";
   Store.merge(nOnly, { events: [], settings: { weekStart: 1 } }, "2026-10-28");
   eq("メモだけある端末は空の端末ではない", nOnly.settings.weekStart, 0);
+
+  // ころあい（仕様書 2.17）
+  const ko = { id: "k1", title: "シーツを洗う", every: 14, done: ["2026-10-15", "2026-10-01", "2026-10-15"], createdAt: "2026-10-01T00:00:00.000Z" };
+  const kbad = (o) => Store.isKoro({ ...ko, ...o });
+  eq("ころあいの形の確かめ", [kbad({}), kbad({ every: 0 }), kbad({ every: 3651 }), kbad({ every: "14" }), kbad({ every: 1.5 }), kbad({ title: " " }), kbad({ done: ["2026-02-30"] }), kbad({ done: null })],
+    [true, false, false, false, false, false, false, false]);
+  eq("ころあいは記録を並べ直して重なりを消す", Store.cleanKoro(ko).done, ["2026-10-01", "2026-10-15"]);
+  mem.set(KEY, JSON.stringify({ version: 1, events: [], koro: [ko, { id: "z" }] }));
+  await Store.init();
+  const kl = Store.load();
+  eq("壊れたころあいは飛ばして退避する", [kl.koro.map((x) => x.id), brokenKeys().length > 0], [["k1"], true]);
+  for (const k of brokenKeys()) mem.delete(k);
+  mem.set(KEY, JSON.stringify({ version: 1, events: [] }));
+  await Store.init();
+  eq("前の版の中身はころあい無し", [Store.load().koro, brokenKeys().length], [[], 0]);
+  const km = Store.fresh();
+  km.koro.push(Store.cleanKoro({ ...ko, title: "今のころあい" }));
+  const kres = Store.merge(km, { events: [], koro: [{ ...ko, title: "ファイルのころあい" }, { ...ko, id: "k2", title: "歯ブラシ" }, { id: "z" }] }, "2026-10-31");
+  eq("足し合わせ ころあい", [kres, km.koro.map((x) => x.title), km.settings.startedAt],
+    [{ added: 0, skipped: 0, broken: 1, habits: 0, koro: 1, notes: 0 }, ["今のころあい", "歯ブラシ"], "2026-10-31"]);
+  const kOnly = Store.fresh();
+  kOnly.koro.push(Store.cleanKoro(ko));
+  Store.merge(kOnly, { events: [], settings: { weekStart: 1 } }, "2026-10-31");
+  const kNew = Store.fresh();
+  Store.merge(kNew, { events: [], koro: [ko] }, "2026-10-31");
+  eq("ころあいだけある端末は空の端末ではない・足したら使い始めた日", [Store.isEmpty(kOnly), kOnly.settings.weekStart, kNew.settings.startedAt], [false, 0, "2026-10-31"]);
 
   // アイコンの数字の設定
   mem.set(KEY, JSON.stringify({ version: 1, events: [], settings: { badge: "true" } }));
